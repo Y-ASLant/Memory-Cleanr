@@ -13,9 +13,10 @@ use crate::win32;
 
 pub const TRAY_POLL: Duration = Duration::from_millis(200);
 
-const WINDOW_WIDTH: f32 = 660.;
-const WINDOW_HEIGHT: f32 = 510.;
-const CONTENT_PADDING: f32 = 12.;
+const WINDOW_WIDTH: f32 = 640.;
+const WINDOW_HEIGHT: f32 = 460.;
+const CONTENT_PADDING: f32 = 10.;
+const CONTENT_PADDING_BOTTOM: f32 = 10.;
 const SECTION_GAP: f32 = 8.;
 
 pub fn default_window_size() -> Size<Pixels> {
@@ -90,10 +91,11 @@ pub struct MemoryCleanerApp {
 impl MemoryCleanerApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let settings = Settings::load();
-        let (physical, virtual_mem) = query_sections(settings.show_virtual_memory).unwrap_or_else(|e| {
-            crate::log_msg(&format!("[memory] initial query failed: {e}"));
-            (MemorySection::unavailable("物理内存"), None)
-        });
+        let (physical, virtual_mem) =
+            query_sections(settings.show_virtual_memory).unwrap_or_else(|e| {
+                crate::log_msg(&format!("[memory] initial query failed: {e}"));
+                (MemorySection::unavailable("物理内存"), None)
+            });
         let window_handle = window.window_handle();
 
         let weak = cx.weak_entity();
@@ -131,8 +133,7 @@ impl MemoryCleanerApp {
     }
 
     pub fn refresh_memory(&mut self) -> bool {
-        let Ok((physical, virtual_mem)) = query_sections(self.settings.show_virtual_memory)
-        else {
+        let Ok((physical, virtual_mem)) = query_sections(self.settings.show_virtual_memory) else {
             return false;
         };
         let phys_changed = self.physical != physical;
@@ -360,7 +361,10 @@ impl Render for MemoryCleanerApp {
         use crate::ui::memory_card::render_memory_card;
         use crate::ui::settings_page::render_settings_bottom;
         use crate::ui::title_bar::render_title_bar;
-        use gpui_component::{group_box::{GroupBox, GroupBoxVariants}, h_flex, v_flex};
+        use gpui_component::{
+            group_box::{GroupBox, GroupBoxVariants},
+            h_flex, v_flex,
+        };
 
         // Extract theme colors before mutable borrows
         let bg = {
@@ -372,92 +376,78 @@ impl Render for MemoryCleanerApp {
         let virtual_mem = self.virtual_mem.clone();
 
         // 根布局：纵向堆叠；窗口固定为 WINDOW_WIDTH × WINDOW_HEIGHT。
-        div()
-            .relative()
-            .w_full()
-            .h_full()
-            .overflow_hidden()
-            .child(
-                v_flex()
-                    .w_full()
-                    .h_full()
-                    .justify_start()
-                    .bg(bg)
-                    .child(render_title_bar(self, window, cx))
-                    .child(
-                        v_flex()
-                            .w_full()
-                            .flex_shrink_0()
-                            .items_start()
-                            .p(px(CONTENT_PADDING))
-                            .gap(px(SECTION_GAP))
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .flex_shrink_0()
-                                    .gap(px(SECTION_GAP))
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
+        div().relative().w_full().h_full().overflow_hidden().child(
+            v_flex()
+                .w_full()
+                .h_full()
+                .justify_start()
+                .bg(bg)
+                .child(render_title_bar(self, window, cx))
+                .child(
+                    v_flex()
+                        .w_full()
+                        .flex_1()
+                        .min_h_0()
+                        .justify_start()
+                        .items_start()
+                        .px(px(CONTENT_PADDING))
+                        .pt(px(CONTENT_PADDING))
+                        .pb(px(CONTENT_PADDING_BOTTOM))
+                        .gap(px(SECTION_GAP))
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .flex_shrink_0()
+                                .gap(px(SECTION_GAP))
+                                .child(
+                                    div().flex_1().min_w_0().child(
+                                        GroupBox::new()
+                                            .id("physical-memory-card")
+                                            .outline()
+                                            .w_full()
+                                            .p_0()
                                             .child(
-                                                GroupBox::new()
-                                                    .id("physical-memory-card")
-                                                    .outline()
+                                                v_flex()
                                                     .w_full()
-                                                    .p_0()
-                                                    .child(
-                                                        v_flex()
-                                                            .w_full()
-                                                            .items_center()
-                                                            .py(px(6.))
-                                                            .child(render_memory_card(
-                                                                &physical,
-                                                                "physical-memory",
-                                                                true,
-                                                                window,
-                                                                cx,
-                                                            )),
-                                                    ),
+                                                    .items_center()
+                                                    .py(px(crate::ui::memory_card::MEMORY_CARD_PY))
+                                                    .child(render_memory_card(
+                                                        &physical,
+                                                        "physical-memory",
+                                                        true,
+                                                        window,
+                                                        cx,
+                                                    )),
                                             ),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .child({
-                                                let right = GroupBox::new()
-                                                    .id("virtual-memory-card")
-                                                    .outline()
-                                                    .w_full()
-                                                    .p_0();
-                                                if let Some(virt) = virtual_mem.as_ref() {
-                                                    right.child(
-                                                        v_flex()
-                                                            .w_full()
-                                                            .items_center()
-                                                            .py(px(6.))
-                                                            .child(render_memory_card(
-                                                                virt,
-                                                                "virtual-memory",
-                                                                false,
-                                                                window,
-                                                                cx,
-                                                            )),
-                                                    )
-                                                } else {
-                                                    right
-                                                }
-                                            }),
                                     ),
-                            )
-                            .child(
-                                div()
-                                    .w_full()
-                                    .flex_shrink_0()
-                                    .child(render_settings_bottom(self, cx)),
-                            ),
-                    ),
-            )
+                                )
+                                .child(div().flex_1().min_w_0().child({
+                                    let right = GroupBox::new()
+                                        .id("virtual-memory-card")
+                                        .outline()
+                                        .w_full()
+                                        .p_0();
+                                    if let Some(virt) = virtual_mem.as_ref() {
+                                        right.child(
+                                            v_flex()
+                                                .w_full()
+                                                .items_center()
+                                                .py(px(crate::ui::memory_card::MEMORY_CARD_PY))
+                                                .child(render_memory_card(
+                                                    virt,
+                                                    "virtual-memory",
+                                                    false,
+                                                    window,
+                                                    cx,
+                                                )),
+                                        )
+                                    } else {
+                                        right
+                                    }
+                                })),
+                        )
+                        .child(render_settings_bottom(self, cx)),
+                ),
+        )
     }
 }

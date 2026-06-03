@@ -2,7 +2,6 @@ use gpui::*;
 use gpui_component::{
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
-    group_box::{GroupBox, GroupBoxVariants},
     h_flex,
     label::Label,
     switch::Switch,
@@ -16,9 +15,14 @@ use crate::optimize::MemoryAreas;
 const BOTTOM_COLUMN_GAP: f32 = 10.;
 const BOTTOM_INSET: f32 = 10.;
 
-const PANEL_HEADER_PY: f32 = 8.;
-const PANEL_BODY_PT: f32 = 6.;
+const PANEL_HEADER_PY: f32 = 6.;
+/// 设置面板整体额外高度（分摊到主体区上下内边距，各 +2px）。
+const SETTINGS_PANEL_EXTRA_V: f32 = 4.;
+const PANEL_BODY_PT: f32 = 4. + SETTINGS_PANEL_EXTRA_V / 2.;
+const PANEL_BODY_PB: f32 = SETTINGS_PANEL_EXTRA_V / 2.;
 const PANEL_TITLE_ROW_H: f32 = 18.;
+const CLEANUP_BUTTON_PT: f32 = 4.;
+const CLEANUP_BUTTON_PB: f32 = 6.;
 
 fn section_title(icon: IconName, label: &'static str) -> impl IntoElement {
     h_flex()
@@ -153,30 +157,23 @@ fn switch_row(
             h_flex()
                 .items_center()
                 .gap_2()
+                .min_w_0()
                 .child(
                     Icon::new(icon)
                         .small()
                         .text_color(muted_foreground),
                 )
                 .child(
-                    v_flex()
-                        .gap_0p5()
-                        .child(
-                            Label::new(title)
-                                .text_sm()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(foreground),
-                        )
-                        .child(
-                            Label::new(description)
-                                .text_xs()
-                                .text_color(muted_foreground),
-                        ),
+                    Label::new(title)
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(foreground),
                 ),
         )
         .child(
             Switch::new(id)
                 .checked(checked)
+                .tooltip(description)
                 .on_click(cx.listener(on_click)),
         )
 }
@@ -191,7 +188,8 @@ fn render_settings_options_content(
 
     v_flex()
         .w_full()
-        .gap_0p5()
+        .h_full()
+        .justify_between()
         .child(switch_row(
             "inline-always-on-top",
             IconName::Star,
@@ -236,12 +234,15 @@ fn render_settings_options_content(
 fn render_cleanup_button(
     app: &MemoryCleanerApp,
     border: Hsla,
+    inset: Pixels,
     cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
     div()
         .w_full()
         .flex_shrink_0()
-        .pt_2()
+        .px(inset)
+        .pb(px(CLEANUP_BUTTON_PB))
+        .pt(px(CLEANUP_BUTTON_PT))
         .border_t_1()
         .border_color(border)
         .child(
@@ -262,39 +263,33 @@ fn render_cleanup_button(
         )
 }
 
-/// 右栏：复选框自然高度 + 按钮贴列底（与左栏开关区底对齐）。
-fn render_settings_cleanup_column(
-    app: &MemoryCleanerApp,
-    border: Hsla,
-    cx: &mut Context<MemoryCleanerApp>,
-) -> impl IntoElement {
-    v_flex()
-        .w_full()
-        .h_full()
-        .justify_between()
-        .child(div().flex_shrink_0().child(cleanup_areas_grid(app, cx)))
-        .child(render_cleanup_button(app, border, cx))
-}
-
 pub fn render_settings_bottom(
     app: &MemoryCleanerApp,
     cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
     let theme = cx.theme();
     let border = theme.border;
+    let radius = theme.radius;
     let muted_foreground = theme.muted_foreground;
     let foreground = theme.foreground;
     let gap = px(BOTTOM_COLUMN_GAP);
     let inset = px(BOTTOM_INSET);
 
-    GroupBox::new()
+    // 不用 GroupBox：outline 内层固定 p_4 + gap_4，且易被父级 flex 撑高。
+    div()
         .id("settings-bottom-panel")
-        .outline()
         .w_full()
+        .flex_1()
+        .min_h_0()
+        .rounded(radius)
+        .border_1()
+        .border_color(border)
+        .overflow_hidden()
         .child(
             v_flex()
                 .w_full()
-                .flex_shrink_0()
+                .h_full()
+                .justify_start()
                 .child(
                     h_flex()
                         .w_full()
@@ -320,16 +315,18 @@ pub fn render_settings_bottom(
                 .child(
                     h_flex()
                         .w_full()
-                        .flex_shrink_0()
+                        .flex_1()
+                        .min_h_0()
                         .items_stretch()
                         .gap(gap)
                         .px(inset)
-                        .pb(inset)
+                        .pb(px(PANEL_BODY_PB))
                         .pt(px(PANEL_BODY_PT))
                         .child(
-                            div()
+                            v_flex()
                                 .flex_1()
                                 .min_w_0()
+                                .h_full()
                                 .child(render_settings_options_content(
                                     app,
                                     muted_foreground,
@@ -337,14 +334,14 @@ pub fn render_settings_bottom(
                                     cx,
                                 )),
                         )
-                        .child(column_divider(border).h_full())
+                        .child(column_divider(border).self_stretch())
                         .child(
                             div()
                                 .flex_1()
                                 .min_w_0()
-                                .h_full()
-                                .child(render_settings_cleanup_column(app, border, cx)),
+                                .child(cleanup_areas_grid(app, cx)),
                         ),
-                ),
+                )
+                .child(render_cleanup_button(app, border, inset, cx)),
         )
 }

@@ -17,6 +17,9 @@ const RING_ANIM_DURATION: Duration = Duration::from_millis(450);
 const OUTER_RADIUS: f32 = 55.;
 const INNER_RADIUS: f32 = 35.;
 
+/// 卡片容器上下内边距（app 中 GroupBox 内 v_flex 使用）。
+pub const MEMORY_CARD_PY: f32 = 2.;
+
 #[derive(Clone, Copy)]
 struct RingTheme {
     chart_1: Hsla,
