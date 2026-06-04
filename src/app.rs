@@ -19,10 +19,6 @@ const CONTENT_PADDING: f32 = 10.;
 const CONTENT_PADDING_BOTTOM: f32 = 10.;
 const SECTION_GAP: f32 = 8.;
 
-pub fn default_window_size() -> Size<Pixels> {
-    window_size()
-}
-
 pub fn window_size() -> Size<Pixels> {
     size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT))
 }
@@ -260,18 +256,10 @@ impl MemoryCleanerApp {
         .detach();
     }
 
-    pub fn sync_window_size(&self, cx: &mut Context<Self>) {
-        let size = window_size();
-        let _ = self.window.update(cx, |_, window, _| {
-            window.resize(size);
-        });
-    }
-
     pub fn finish_optimize(&mut self, message: String, cx: &mut Context<Self>) {
         self.optimize_step = message;
         self.optimize_percent = 100.0;
         let _ = self.refresh_memory();
-        self.sync_window_size(cx);
         cx.notify();
     }
 
@@ -293,7 +281,6 @@ impl MemoryCleanerApp {
         self.optimize_step = "准备清理...".into();
         self.optimize_percent = 0.0;
         cx.notify();
-        self.sync_window_size(cx);
 
         cx.spawn(async move |this, cx| {
             let mut completed = Vec::new();
@@ -348,7 +335,6 @@ impl MemoryCleanerApp {
                 this.optimize_step.clear();
                 this.optimize_percent = 0.0;
                 this.last_optimize_time = Some(Instant::now());
-                this.sync_window_size(cx);
                 cx.notify();
             });
         })

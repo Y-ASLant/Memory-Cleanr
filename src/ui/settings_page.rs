@@ -4,6 +4,7 @@ use gpui_component::{
     checkbox::Checkbox,
     h_flex,
     label::Label,
+    progress::ProgressCircle,
     switch::Switch,
     v_flex,
     ActiveTheme, Disableable, Icon, IconName, Sizable,
@@ -46,14 +47,13 @@ fn column_divider(border: Hsla) -> Div {
 
 fn memory_area_checkbox(
     id: &'static str,
-    label: &'static str,
     area: MemoryAreas,
     app: &MemoryCleanerApp,
     cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
     let checked = app.settings.memory_areas().contains(area);
     Checkbox::new(id)
-        .label(label)
+        .label(area.label())
         .text_sm()
         .py_1()
         .checked(checked)
@@ -75,28 +75,24 @@ fn cleanup_areas_grid(
                 .gap_1()
                 .child(memory_area_checkbox(
                     "inline-standby-normal",
-                    "待机列表",
                     MemoryAreas::STANDBY_LIST,
                     app,
                     cx,
                 ))
                 .child(memory_area_checkbox(
                     "inline-standby-low",
-                    "待机列表(低优先级)",
                     MemoryAreas::STANDBY_LIST_LOW_PRIORITY,
                     app,
                     cx,
                 ))
                 .child(memory_area_checkbox(
                     "inline-area-working-set",
-                    "工作集",
                     MemoryAreas::WORKING_SET,
                     app,
                     cx,
                 ))
                 .child(memory_area_checkbox(
                     "inline-area-system-file-cache",
-                    "系统文件缓存",
                     MemoryAreas::SYSTEM_FILE_CACHE,
                     app,
                     cx,
@@ -108,28 +104,24 @@ fn cleanup_areas_grid(
                 .gap_1()
                 .child(memory_area_checkbox(
                     "inline-area-combined",
-                    "合并页面",
                     MemoryAreas::COMBINED_PAGE_LIST,
                     app,
                     cx,
                 ))
                 .child(memory_area_checkbox(
                     "inline-area-modified-file",
-                    "已修改文件",
                     MemoryAreas::MODIFIED_FILE_CACHE,
                     app,
                     cx,
                 ))
                 .child(memory_area_checkbox(
                     "inline-area-modified-page",
-                    "已修改页面",
                     MemoryAreas::MODIFIED_PAGE_LIST,
                     app,
                     cx,
                 ))
                 .child(memory_area_checkbox(
                     "inline-area-registry-cache",
-                    "注册表缓存",
                     MemoryAreas::REGISTRY_CACHE,
                     app,
                     cx,
@@ -231,12 +223,50 @@ fn render_settings_options_content(
         ))
 }
 
+fn cleanup_button_label(app: &MemoryCleanerApp) -> String {
+    if app.is_optimizing {
+        if app.optimize_step.is_empty() {
+            "清理中...".into()
+        } else {
+            app.optimize_step.clone()
+        }
+    } else if app.optimize_percent >= 100.0 && !app.optimize_step.is_empty() {
+        app.optimize_step.clone()
+    } else {
+        "一键清理".into()
+    }
+}
+
 fn render_cleanup_button(
     app: &MemoryCleanerApp,
     border: Hsla,
     inset: Pixels,
     cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
+    let areas_empty = app.settings.memory_areas().is_empty();
+    let show_progress = app.is_optimizing
+        || (app.optimize_percent >= 100.0 && !app.optimize_step.is_empty());
+
+    let mut button = Button::new("inline-optimize")
+        .label(cleanup_button_label(app))
+        .primary()
+        .w_full()
+        .px_8()
+        .disabled(areas_empty || app.is_optimizing)
+        .tooltip(if areas_empty {
+            "请先选择清理区域"
+        } else if app.is_optimizing {
+            "正在清理内存"
+        } else {
+            "开始清理内存"
+        });
+
+    if show_progress {
+        button = button.icon(
+            ProgressCircle::new("inline-optimize-progress").value(app.optimize_percent),
+        );
+    }
+
     div()
         .w_full()
         .flex_shrink_0()
@@ -245,22 +275,9 @@ fn render_cleanup_button(
         .pt(px(CLEANUP_BUTTON_PT))
         .border_t_1()
         .border_color(border)
-        .child(
-            Button::new("inline-optimize")
-                .label("一键清理")
-                .primary()
-                .w_full()
-                .px_8()
-                .disabled(app.is_optimizing || app.settings.memory_areas().is_empty())
-                .tooltip(if app.settings.memory_areas().is_empty() {
-                    "请先选择清理区域"
-                } else {
-                    "开始清理内存"
-                })
-                .on_click(cx.listener(|app, _, _, cx| {
-                    app.run_optimize(cx);
-                })),
-        )
+        .child(button.on_click(cx.listener(|app, _, _, cx| {
+            app.run_optimize(cx);
+        })))
 }
 
 pub fn render_settings_bottom(

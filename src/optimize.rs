@@ -38,53 +38,58 @@ impl MemoryAreas {
         .union(Self::STANDBY_LIST)
         .union(Self::COMBINED_PAGE_LIST)
         .union(Self::MODIFIED_FILE_CACHE);
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::WORKING_SET => "工作集",
+            Self::SYSTEM_FILE_CACHE => "系统文件缓存",
+            Self::MODIFIED_PAGE_LIST => "已修改页面",
+            Self::STANDBY_LIST => "待机列表",
+            Self::STANDBY_LIST_LOW_PRIORITY => "待机列表(低优先级)",
+            Self::COMBINED_PAGE_LIST => "合并页面",
+            Self::MODIFIED_FILE_CACHE => "已修改文件",
+            Self::REGISTRY_CACHE => "注册表缓存",
+            _ => "未知区域",
+        }
+    }
 }
 
 struct OptimizeStep {
     area: MemoryAreas,
-    name: &'static str,
     run: OptimizeFn,
 }
 
 const OPTIMIZE_STEPS: &[OptimizeStep] = &[
     OptimizeStep {
         area: MemoryAreas::WORKING_SET,
-        name: "工作集",
         run: optimize_working_set,
     },
     OptimizeStep {
         area: MemoryAreas::SYSTEM_FILE_CACHE,
-        name: "系统文件缓存",
         run: optimize_system_file_cache,
     },
     OptimizeStep {
         area: MemoryAreas::MODIFIED_PAGE_LIST,
-        name: "已修改页面",
         run: optimize_modified_page_list,
     },
     OptimizeStep {
         area: MemoryAreas::STANDBY_LIST,
-        name: "备用列表",
         run: optimize_standby_list_normal,
     },
     OptimizeStep {
         area: MemoryAreas::STANDBY_LIST_LOW_PRIORITY,
-        name: "备用列表(低)",
         run: optimize_standby_list_low,
     },
     OptimizeStep {
         area: MemoryAreas::COMBINED_PAGE_LIST,
-        name: "合并页面",
         run: optimize_combined_page_list,
     },
     OptimizeStep {
         area: MemoryAreas::MODIFIED_FILE_CACHE,
-        name: "已修改文件",
         run: optimize_modified_file_cache,
     },
     OptimizeStep {
         area: MemoryAreas::REGISTRY_CACHE,
-        name: "注册表缓存",
         run: optimize_registry_cache,
     },
 ];
@@ -97,24 +102,33 @@ pub fn step_plan(areas: MemoryAreas) -> Result<StepPlan> {
     Ok(OPTIMIZE_STEPS
         .iter()
         .filter(|step| areas.contains(step.area))
-        .map(|step| (step.name, step.run))
+        .map(|step| (step.area.label(), step.run))
         .collect())
 }
 
-fn optimize_working_set() -> Result<()> {
-    enable_privilege("SeProfileSingleProcessPrivilege")
-        .context("Working Set requires SeProfileSingleProcessPrivilege")?;
-
-    let command = SystemMemoryListCommand::EmptyWorkingSets;
-
+fn purge_memory_list(
+    command: SystemMemoryListCommand,
+    privilege: &str,
+    what: &str,
+) -> Result<()> {
+    enable_privilege(privilege).with_context(|| format!("{what} requires {privilege}"))?;
     nt_set_system_information(
         InfoClass::MemoryList,
-        &command as *const _ as *mut _,
+        (&command as *const SystemMemoryListCommand)
+            .cast_mut()
+            .cast::<core::ffi::c_void>(),
         std::mem::size_of::<SystemMemoryListCommand>() as u32,
     )
-    .context("NtSetSystemInformation (Working Set) failed")?;
-
+    .with_context(|| format!("NtSetSystemInformation ({what}) failed"))?;
     Ok(())
+}
+
+fn optimize_working_set() -> Result<()> {
+    purge_memory_list(
+        SystemMemoryListCommand::EmptyWorkingSets,
+        "SeProfileSingleProcessPrivilege",
+        "Working Set",
+    )
 }
 
 fn optimize_system_file_cache() -> Result<()> {
@@ -144,19 +158,11 @@ fn optimize_system_file_cache() -> Result<()> {
 }
 
 fn optimize_modified_page_list() -> Result<()> {
-    enable_privilege("SeProfileSingleProcessPrivilege")
-        .context("Modified Page List requires SeProfileSingleProcessPrivilege")?;
-
-    let command = SystemMemoryListCommand::FlushModifiedList;
-
-    nt_set_system_information(
-        InfoClass::MemoryList,
-        &command as *const _ as *mut _,
-        std::mem::size_of::<SystemMemoryListCommand>() as u32,
+    purge_memory_list(
+        SystemMemoryListCommand::FlushModifiedList,
+        "SeProfileSingleProcessPrivilege",
+        "Modified Page List",
     )
-    .context("NtSetSystemInformation (Modified Page List) failed")?;
-
-    Ok(())
 }
 
 fn optimize_standby_list_normal() -> Result<()> {
@@ -168,23 +174,16 @@ fn optimize_standby_list_low() -> Result<()> {
 }
 
 fn optimize_standby_list(low_priority: bool) -> Result<()> {
-    enable_privilege("SeProfileSingleProcessPrivilege")
-        .context("Standby List requires SeProfileSingleProcessPrivilege")?;
-
     let command = if low_priority {
         SystemMemoryListCommand::PurgeLowPriorityStandbyList
     } else {
         SystemMemoryListCommand::PurgeStandbyList
     };
-
-    nt_set_system_information(
-        InfoClass::MemoryList,
-        &command as *const _ as *mut _,
-        std::mem::size_of::<SystemMemoryListCommand>() as u32,
+    purge_memory_list(
+        command,
+        "SeProfileSingleProcessPrivilege",
+        "Standby List",
     )
-    .context("NtSetSystemInformation (Standby List) failed")?;
-
-    Ok(())
 }
 
 fn optimize_combined_page_list() -> Result<()> {

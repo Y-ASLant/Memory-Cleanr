@@ -18,6 +18,23 @@ fn show_window(hwnd: HWND, cmd: SHOW_WINDOW_CMD) -> Result<()> {
     Ok(())
 }
 
+fn apply_extended_style(hwnd: HWND, update: impl FnOnce(u32) -> u32) -> Result<()> {
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, update(style) as _);
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        );
+    }
+    Ok(())
+}
+
 fn hwnd_from_window(window: &Window) -> Result<HWND> {
     let handle = HasWindowHandle::window_handle(window)
         .map_err(|e| anyhow::anyhow!("window handle unavailable: {e}"))?;
@@ -31,21 +48,8 @@ fn hwnd_from_window(window: &Window) -> Result<HWND> {
 /// Hide the window and remove it from the taskbar (tray-only visibility).
 pub fn hide_to_tray(window: &Window) -> Result<()> {
     let hwnd = hwnd_from_window(window)?;
-    unsafe {
-        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
-        let new_style = (style | WS_EX_TOOLWINDOW.0) & !WS_EX_APPWINDOW.0;
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_style as _);
-        let _ = SetWindowPos(
-            hwnd,
-            None,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-        );
-        show_window(hwnd, SW_HIDE)?;
-    }
+    apply_extended_style(hwnd, |style| (style | WS_EX_TOOLWINDOW.0) & !WS_EX_APPWINDOW.0)?;
+    show_window(hwnd, SW_HIDE)?;
     Ok(())
 }
 
@@ -54,26 +58,15 @@ pub fn hide_to_tray(window: &Window) -> Result<()> {
 /// rather than leaving it minimized.
 pub fn show_from_tray(window: &Window) -> Result<()> {
     let hwnd = hwnd_from_window(window)?;
-    unsafe {
-        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
-        let new_style = (style & !WS_EX_TOOLWINDOW.0) | WS_EX_APPWINDOW.0;
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_style as _);
-        let _ = SetWindowPos(
-            hwnd,
-            None,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-        );
-        let cmd = if IsIconic(hwnd).as_bool() {
+    apply_extended_style(hwnd, |style| (style & !WS_EX_TOOLWINDOW.0) | WS_EX_APPWINDOW.0)?;
+    let cmd = unsafe {
+        if IsIconic(hwnd).as_bool() {
             SW_RESTORE
         } else {
             SW_SHOW
-        };
-        show_window(hwnd, cmd)?;
-    }
+        }
+    };
+    show_window(hwnd, cmd)?;
     Ok(())
 }
 

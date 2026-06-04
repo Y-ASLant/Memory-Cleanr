@@ -88,37 +88,10 @@ fn ensure_elevated() {
 #[cfg(not(target_os = "windows"))]
 fn ensure_elevated() {}
 
-/// Ensure only one instance of the application is running.
-/// Returns Ok if this is the first instance, Err if another is already running.
-#[cfg(target_os = "windows")]
-fn ensure_single_instance() -> Result<(), Box<dyn std::error::Error>> {
-    use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
-    use windows::Win32::System::Threading::CreateMutexW;
-
-    let mutex_name: Vec<u16> = "MemoryCleanr_{B8F3A7E2-4C1D-4F5A-9B6E-2D8C3F7A1E9B}"
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
-
-    unsafe {
-        let _handle = CreateMutexW(None, true, windows::core::PCWSTR(mutex_name.as_ptr()));
-        if GetLastError() == ERROR_ALREADY_EXISTS {
-            return Err("Application is already running".into());
-        }
-    }
-
-    Ok(())
-}
-
-#[cfg(not(target_os = "windows"))]
-fn ensure_single_instance() -> Result<(), Box<dyn std::error::Error>> {
-    Ok(())
-}
-
 fn main() {
     ensure_elevated();
 
-    if let Err(e) = ensure_single_instance() {
+    if let Err(e) = win32::single_instance::ensure_single_instance() {
         log_msg(&e.to_string());
         std::process::exit(0);
     }
@@ -143,9 +116,9 @@ fn main() {
 
         let window_options = WindowOptions {
             titlebar: Some(TitleBar::title_bar_options()),
-            window_bounds: Some(WindowBounds::centered(app::default_window_size(), cx)),
+            window_bounds: Some(WindowBounds::centered(app::window_size(), cx)),
             is_resizable: false,
-            window_min_size: Some(app::default_window_size()),
+            window_min_size: Some(app::window_size()),
             ..Default::default()
         };
 
