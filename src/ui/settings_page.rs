@@ -1,4 +1,5 @@
 use gpui::*;
+use gpui::prelude::FluentBuilder;
 use gpui_component::{
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
@@ -17,13 +18,12 @@ const BOTTOM_COLUMN_GAP: f32 = 10.;
 const BOTTOM_INSET: f32 = 10.;
 
 const PANEL_HEADER_PY: f32 = 6.;
-/// 设置面板整体额外高度（分摊到主体区上下内边距，各 +2px）。
 const SETTINGS_PANEL_EXTRA_V: f32 = 4.;
 const PANEL_BODY_PT: f32 = 4. + SETTINGS_PANEL_EXTRA_V / 2.;
 const PANEL_BODY_PB: f32 = SETTINGS_PANEL_EXTRA_V / 2.;
 const PANEL_TITLE_ROW_H: f32 = 18.;
 const CLEANUP_BUTTON_PT: f32 = 4.;
-const CLEANUP_BUTTON_PB: f32 = 6.;
+const STATUS_LINE_PB: f32 = 6.;
 
 fn section_title(icon: IconName, label: &'static str) -> impl IntoElement {
     h_flex()
@@ -45,6 +45,14 @@ fn column_divider(border: Hsla) -> Div {
         .bg(border)
 }
 
+fn memory_area_tooltip(area: MemoryAreas) -> &'static str {
+    match area {
+        MemoryAreas::STANDBY_LIST => "清空普通待机列表（与低优先级二选一）",
+        MemoryAreas::STANDBY_LIST_LOW_PRIORITY => "清空低优先级待机列表（与普通待机二选一）",
+        _ => "勾选后将在一键清理时执行",
+    }
+}
+
 fn memory_area_checkbox(
     id: &'static str,
     area: MemoryAreas,
@@ -52,80 +60,98 @@ fn memory_area_checkbox(
     cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
     let checked = app.settings.memory_areas().contains(area);
-    Checkbox::new(id)
+    let mut checkbox = Checkbox::new(id)
         .label(area.label())
         .text_sm()
         .py_1()
         .checked(checked)
+        .tooltip(memory_area_tooltip(area))
         .on_click(cx.listener(move |app, enabled, _, cx| {
             app.set_memory_area(area, *enabled, cx);
-        }))
+        }));
+
+    if app.is_optimizing {
+        checkbox = checkbox.disabled(true);
+    }
+
+    checkbox
 }
 
 fn cleanup_areas_grid(
     app: &MemoryCleanerApp,
+    muted_foreground: Hsla,
     cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
-    h_flex()
+    v_flex()
         .w_full()
-        .gap_4()
+        .gap_1()
         .child(
-            v_flex()
-                .flex_1()
-                .gap_1()
-                .child(memory_area_checkbox(
-                    "inline-standby-normal",
-                    MemoryAreas::STANDBY_LIST,
-                    app,
-                    cx,
-                ))
-                .child(memory_area_checkbox(
-                    "inline-standby-low",
-                    MemoryAreas::STANDBY_LIST_LOW_PRIORITY,
-                    app,
-                    cx,
-                ))
-                .child(memory_area_checkbox(
-                    "inline-area-working-set",
-                    MemoryAreas::WORKING_SET,
-                    app,
-                    cx,
-                ))
-                .child(memory_area_checkbox(
-                    "inline-area-system-file-cache",
-                    MemoryAreas::SYSTEM_FILE_CACHE,
-                    app,
-                    cx,
-                )),
+            Label::new("待机列表两项互斥，仅可勾选其一")
+                .text_xs()
+                .text_color(muted_foreground),
         )
         .child(
-            v_flex()
-                .flex_1()
-                .gap_1()
-                .child(memory_area_checkbox(
-                    "inline-area-combined",
-                    MemoryAreas::COMBINED_PAGE_LIST,
-                    app,
-                    cx,
-                ))
-                .child(memory_area_checkbox(
-                    "inline-area-modified-file",
-                    MemoryAreas::MODIFIED_FILE_CACHE,
-                    app,
-                    cx,
-                ))
-                .child(memory_area_checkbox(
-                    "inline-area-modified-page",
-                    MemoryAreas::MODIFIED_PAGE_LIST,
-                    app,
-                    cx,
-                ))
-                .child(memory_area_checkbox(
-                    "inline-area-registry-cache",
-                    MemoryAreas::REGISTRY_CACHE,
-                    app,
-                    cx,
-                )),
+            h_flex()
+                .w_full()
+                .gap_4()
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .gap_1()
+                        .child(memory_area_checkbox(
+                            "inline-standby-normal",
+                            MemoryAreas::STANDBY_LIST,
+                            app,
+                            cx,
+                        ))
+                        .child(memory_area_checkbox(
+                            "inline-standby-low",
+                            MemoryAreas::STANDBY_LIST_LOW_PRIORITY,
+                            app,
+                            cx,
+                        ))
+                        .child(memory_area_checkbox(
+                            "inline-area-working-set",
+                            MemoryAreas::WORKING_SET,
+                            app,
+                            cx,
+                        ))
+                        .child(memory_area_checkbox(
+                            "inline-area-system-file-cache",
+                            MemoryAreas::SYSTEM_FILE_CACHE,
+                            app,
+                            cx,
+                        )),
+                )
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .gap_1()
+                        .child(memory_area_checkbox(
+                            "inline-area-combined",
+                            MemoryAreas::COMBINED_PAGE_LIST,
+                            app,
+                            cx,
+                        ))
+                        .child(memory_area_checkbox(
+                            "inline-area-modified-file",
+                            MemoryAreas::MODIFIED_FILE_CACHE,
+                            app,
+                            cx,
+                        ))
+                        .child(memory_area_checkbox(
+                            "inline-area-modified-page",
+                            MemoryAreas::MODIFIED_PAGE_LIST,
+                            app,
+                            cx,
+                        ))
+                        .child(memory_area_checkbox(
+                            "inline-area-registry-cache",
+                            MemoryAreas::REGISTRY_CACHE,
+                            app,
+                            cx,
+                        )),
+                ),
         )
 }
 
@@ -230,22 +256,25 @@ fn cleanup_button_label(app: &MemoryCleanerApp) -> String {
         } else {
             app.optimize_step.clone()
         }
-    } else if app.optimize_percent >= 100.0 && !app.optimize_step.is_empty() {
-        app.optimize_step.clone()
     } else {
         "一键清理".into()
     }
 }
 
-fn render_cleanup_button(
+fn render_cleanup_section(
     app: &MemoryCleanerApp,
     border: Hsla,
     inset: Pixels,
     cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
     let areas_empty = app.settings.memory_areas().is_empty();
-    let show_progress = app.is_optimizing
-        || (app.optimize_percent >= 100.0 && !app.optimize_step.is_empty());
+    let show_progress = app.is_optimizing || app.optimize_percent >= 100.0;
+    let status_visible = !app.optimize_status.is_empty();
+    let status_color = if app.optimize_status.contains("失败") {
+        cx.theme().danger
+    } else {
+        cx.theme().muted_foreground
+    };
 
     let mut button = Button::new("inline-optimize")
         .label(cleanup_button_label(app))
@@ -267,17 +296,30 @@ fn render_cleanup_button(
         );
     }
 
-    div()
+    v_flex()
         .w_full()
         .flex_shrink_0()
         .px(inset)
-        .pb(px(CLEANUP_BUTTON_PB))
+        .pb(px(STATUS_LINE_PB))
         .pt(px(CLEANUP_BUTTON_PT))
         .border_t_1()
         .border_color(border)
+        .gap_1()
         .child(button.on_click(cx.listener(|app, _, _, cx| {
             app.run_optimize(cx);
         })))
+        .child(
+            div()
+                .w_full()
+                .min_h(px(16.))
+                .when(status_visible, |this| {
+                    this.child(
+                        Label::new(app.optimize_status.clone())
+                            .text_xs()
+                            .text_color(status_color),
+                    )
+                }),
+        )
 }
 
 pub fn render_settings_bottom(
@@ -292,7 +334,6 @@ pub fn render_settings_bottom(
     let gap = px(BOTTOM_COLUMN_GAP);
     let inset = px(BOTTOM_INSET);
 
-    // 不用 GroupBox：outline 内层固定 p_4 + gap_4，且易被父级 flex 撑高。
     div()
         .id("settings-bottom-panel")
         .w_full()
@@ -356,9 +397,9 @@ pub fn render_settings_bottom(
                             div()
                                 .flex_1()
                                 .min_w_0()
-                                .child(cleanup_areas_grid(app, cx)),
+                                .child(cleanup_areas_grid(app, muted_foreground, cx)),
                         ),
                 )
-                .child(render_cleanup_button(app, border, inset, cx)),
+                .child(render_cleanup_section(app, border, inset, cx)),
         )
 }

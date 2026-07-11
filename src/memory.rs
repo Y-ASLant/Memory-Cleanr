@@ -35,6 +35,10 @@ impl MemorySection {
             used_percent: 0.0,
         }
     }
+
+    pub fn is_unavailable(&self) -> bool {
+        self.total == 0
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

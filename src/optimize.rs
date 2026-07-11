@@ -15,6 +15,7 @@ use crate::win32::nt::{
 };
 
 type OptimizeFn = fn() -> Result<()>;
+pub type OptimizeStepFn = OptimizeFn;
 type StepPlan = Vec<(&'static str, OptimizeFn)>;
 
 bitflags::bitflags! {
@@ -202,75 +203,81 @@ fn optimize_combined_page_list() -> Result<()> {
     Ok(())
 }
 
-fn optimize_modified_file_cache() -> Result<()> {
+pub fn fixed_drives() -> Vec<char> {
+    get_fixed_drives()
+}
+
+pub fn optimize_drive_cache(drive_letter: char) -> Result<()> {
     const IOCTL_RESET_WRITE_ORDER: u32 = 0x000900F8;
     const FSCTL_DISCARD_VOLUME_CACHE: u32 = 0x00090054;
 
-    let mut failed: Vec<char> = Vec::new();
+    let path = format!("\\\\.\\{}:", drive_letter);
+    let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
 
+    let handle = unsafe {
+        CreateFileW(
+            windows::core::PCWSTR(wide.as_ptr()),
+            (GENERIC_READ | GENERIC_WRITE).0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_NO_BUFFERING,
+            None,
+        )
+    };
+
+    let h = handle.context(format!("open drive {drive_letter}:"))?;
+    if h.is_invalid() {
+        bail!("invalid handle for drive {drive_letter}:");
+    }
+
+    let mut bytes_returned = 0u32;
+    let mut drive_failed = false;
+
+    unsafe {
+        if !DeviceIoControl(
+            h,
+            IOCTL_RESET_WRITE_ORDER,
+            Some(&[0u8] as *const _ as *const _),
+            1,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        )
+        .is_ok()
+        {
+            drive_failed = true;
+        }
+        if !DeviceIoControl(
+            h,
+            FSCTL_DISCARD_VOLUME_CACHE,
+            None,
+            0,
+            None,
+            0,
+            Some(&mut bytes_returned),
+            None,
+        )
+        .is_ok()
+        {
+            drive_failed = true;
+        }
+        let _ = windows::Win32::Storage::FileSystem::FlushFileBuffers(h);
+        let _ = CloseHandle(h);
+    }
+
+    if drive_failed {
+        bail!("drive {drive_letter}: cache flush failed");
+    }
+
+    Ok(())
+}
+
+fn optimize_modified_file_cache() -> Result<()> {
+    let mut failed = Vec::new();
     for drive_letter in get_fixed_drives() {
-        let path = format!("\\\\.\\{}:", drive_letter);
-        let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
-
-        let handle = unsafe {
-            CreateFileW(
-                windows::core::PCWSTR(wide.as_ptr()),
-                (GENERIC_READ | GENERIC_WRITE).0,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
-                None,
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_NO_BUFFERING,
-                None,
-            )
-        };
-
-        let Ok(h) = handle else {
-            failed.push(drive_letter);
-            continue;
-        };
-        if h.is_invalid() {
-            failed.push(drive_letter);
-            continue;
-        }
-
-        let mut bytes_returned = 0u32;
-        let mut drive_failed = false;
-
-        // IOCTL_RESET_WRITE_ORDER requires a single-byte input buffer
-        unsafe {
-            if !DeviceIoControl(
-                h,
-                IOCTL_RESET_WRITE_ORDER,
-                Some(&[0u8] as *const _ as *const _),
-                1,
-                None,
-                0,
-                Some(&mut bytes_returned),
-                None,
-            )
-            .is_ok()
-            {
-                drive_failed = true;
-            }
-            if !DeviceIoControl(
-                h,
-                FSCTL_DISCARD_VOLUME_CACHE,
-                None,
-                0,
-                None,
-                0,
-                Some(&mut bytes_returned),
-                None,
-            )
-            .is_ok()
-            {
-                drive_failed = true;
-            }
-            let _ = windows::Win32::Storage::FileSystem::FlushFileBuffers(h);
-            let _ = CloseHandle(h);
-        }
-
-        if drive_failed {
+        if optimize_drive_cache(drive_letter).is_err() {
             failed.push(drive_letter);
         }
     }

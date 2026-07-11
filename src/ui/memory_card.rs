@@ -1,4 +1,4 @@
-use std::{cell::Cell, f32::consts::TAU, time::Duration};
+use std::f32::consts::TAU;
 
 use gpui::{canvas, Animation, AnimationExt, *};
 use gpui_component::{
@@ -8,17 +8,34 @@ use gpui_component::{
     plot::shape::{Arc, ArcData},
     v_flex, ActiveTheme, Icon, IconName, Sizable,
 };
-use smol::Timer;
 
-use crate::app::MemoryCleanerApp;
 use crate::memory::MemorySection;
 
-const RING_ANIM_DURATION: Duration = Duration::from_millis(450);
+pub const RING_ANIM_DURATION_MS: u64 = 450;
+
 const OUTER_RADIUS: f32 = 55.;
 const INNER_RADIUS: f32 = 35.;
 
 /// 卡片容器上下内边距（app 中 GroupBox 内 v_flex 使用）。
 pub const MEMORY_CARD_PY: f32 = 2.;
+
+/// Ring animation endpoints; updated by the app when memory data changes.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RingAnim {
+    pub from: f32,
+    pub to: f32,
+}
+
+impl RingAnim {
+    pub fn new(percent: f32) -> Self {
+        let p = percent.clamp(0.0, 100.0);
+        Self { from: p, to: p }
+    }
+
+    pub fn is_animating(&self) -> bool {
+        (self.from - self.to).abs() > 0.01
+    }
+}
 
 #[derive(Clone, Copy)]
 struct RingTheme {
@@ -37,11 +54,6 @@ impl RingTheme {
             danger: theme.danger,
         }
     }
-}
-
-struct RingAnimState {
-    value: f32,
-    target: Cell<f32>,
 }
 
 fn usage_color(percent: f32, theme: RingTheme) -> Hsla {
@@ -135,7 +147,8 @@ fn render_animated_ring(id: &'static str, from: f32, to: f32, theme: RingTheme) 
         .id(id)
         .with_animation(
             format!("{id}-ring-anim"),
-            Animation::new(RING_ANIM_DURATION).with_easing(ease_in_out_cubic),
+            Animation::new(std::time::Duration::from_millis(RING_ANIM_DURATION_MS))
+                .with_easing(ease_in_out_cubic),
             move |this, delta| {
                 let percent = from + (to - from) * delta;
                 this.child(render_ring(percent, theme))
@@ -146,31 +159,13 @@ fn render_animated_ring(id: &'static str, from: f32, to: f32, theme: RingTheme) 
 
 pub fn render_memory_card(
     section: &MemorySection,
+    ring: RingAnim,
     id: &'static str,
     is_physical: bool,
-    window: &mut Window,
-    cx: &mut Context<MemoryCleanerApp>,
+    cx: &App,
 ) -> impl IntoElement {
     let ring_theme = RingTheme::new(cx.theme());
-    let target = section.used_percent.clamp(0.0, 100.0);
-
-    let state = window.use_keyed_state(id, cx, |_, _| RingAnimState {
-        value: target,
-        target: Cell::new(target),
-    });
-    let current = state.read(cx).value;
-
-    if (state.read(cx).target.get() - target).abs() > 0.01 {
-        state.read(cx).target.set(target);
-        let anim_state = state.clone();
-        cx.spawn(async move |_, async_cx| {
-            Timer::after(RING_ANIM_DURATION).await;
-            _ = anim_state.update(async_cx, |this, _| {
-                this.value = this.target.get();
-            });
-        })
-        .detach();
-    }
+    let unavailable = section.is_unavailable();
 
     let icon = if is_physical {
         IconName::Cpu
@@ -178,13 +173,19 @@ pub fn render_memory_card(
         IconName::HardDrive
     };
 
-    let ring = if (current - target).abs() > 0.01 {
-        render_animated_ring(id, current, state.read(cx).target.get(), ring_theme)
+    let ring = if unavailable {
+        render_ring(0.0, ring_theme).into_any_element()
+    } else if ring.is_animating() {
+        render_animated_ring(id, ring.from, ring.to, ring_theme)
     } else {
-        render_ring(target, ring_theme).into_any_element()
+        render_ring(ring.to, ring_theme).into_any_element()
     };
 
-    let summary = section.usage_summary();
+    let summary = if unavailable {
+        "无法读取内存信息".into()
+    } else {
+        section.usage_summary()
+    };
     let muted = cx.theme().foreground.opacity(0.82);
 
     v_flex()
@@ -206,6 +207,10 @@ pub fn render_memory_card(
         .child(
             Label::new(summary)
                 .text_xs()
-                .text_color(muted),
+                .text_color(if unavailable {
+                    cx.theme().warning
+                } else {
+                    muted
+                }),
         )
 }
