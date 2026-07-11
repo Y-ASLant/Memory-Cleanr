@@ -59,7 +59,7 @@ impl Settings {
 
     pub fn load() -> Self {
         let path = Self::config_path();
-        match std::fs::read_to_string(&path) {
+        let mut settings = match std::fs::read_to_string(&path) {
             Ok(content) => match toml::from_str(&content) {
                 Ok(settings) => settings,
                 Err(e) => {
@@ -75,6 +75,18 @@ impl Settings {
                 crate::log_msg(&format!("Failed to read {}: {e}", path.display()));
                 Self::default()
             }
+        };
+        settings.normalize_memory_areas();
+        settings
+    }
+
+    fn normalize_memory_areas(&mut self) {
+        let mut areas = MemoryAreas::from_bits_truncate(self.memory_areas);
+        if areas.contains(MemoryAreas::STANDBY_LIST)
+            && areas.contains(MemoryAreas::STANDBY_LIST_LOW_PRIORITY)
+        {
+            areas.remove(MemoryAreas::STANDBY_LIST_LOW_PRIORITY);
+            self.memory_areas = areas.bits();
         }
     }
 
@@ -104,6 +116,12 @@ impl Settings {
     }
 
     pub fn memory_areas(&self) -> MemoryAreas {
-        MemoryAreas::from_bits_truncate(self.memory_areas)
+        let mut areas = MemoryAreas::from_bits_truncate(self.memory_areas);
+        if areas.contains(MemoryAreas::STANDBY_LIST)
+            && areas.contains(MemoryAreas::STANDBY_LIST_LOW_PRIORITY)
+        {
+            areas.remove(MemoryAreas::STANDBY_LIST_LOW_PRIORITY);
+        }
+        areas
     }
 }

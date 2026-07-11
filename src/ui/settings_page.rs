@@ -352,27 +352,27 @@ fn render_action_footer(
     cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
     let areas_empty = app.settings.memory_areas().is_empty();
-    let button_tooltip = if areas_empty {
-        "请先选择清理区域".to_string()
-    } else if app.is_optimizing {
-        status_line_text(app).unwrap_or_else(|| "正在清理内存".into())
-    } else if !app.optimize_status.is_empty() {
-        app.optimize_status.clone()
-    } else {
-        "开始清理内存".to_string()
-    };
-
-    let button = Button::new("inline-optimize")
+    let mut button = Button::new("inline-optimize")
         .primary()
         .w_full()
         .flex_shrink_0()
         .h(px(CLEANUP_BUTTON_H))
         .disabled(areas_empty || app.is_optimizing)
-        .tooltip(button_tooltip)
         .child(render_cleanup_button_content(app, cx))
         .on_click(cx.listener(|app, _, _, cx| {
             app.run_optimize(cx);
         }));
+
+    button = if areas_empty {
+        button.tooltip("请先选择清理区域")
+    } else if app.is_optimizing {
+        let tip = status_line_text(app).unwrap_or_else(|| "正在清理内存".into());
+        button.tooltip(tip)
+    } else if app.optimize_status.is_empty() {
+        button.tooltip("开始清理内存")
+    } else {
+        button
+    };
 
     div()
         .id("cleanup-footer")
@@ -419,7 +419,6 @@ fn render_settings_details(
 
 pub fn render_settings_bottom(
     app: &MemoryCleanerApp,
-    _window: &mut Window,
     cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
     let theme = cx.theme();

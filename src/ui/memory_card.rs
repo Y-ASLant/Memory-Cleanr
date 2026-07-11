@@ -145,13 +145,32 @@ fn render_ring(used_percent: f32, theme: RingTheme) -> impl IntoElement {
 fn render_animated_ring(id: &'static str, from: f32, to: f32, theme: RingTheme) -> AnyElement {
     div()
         .id(id)
+        .relative()
+        .w(px(110.))
+        .h(px(110.))
+        .flex_shrink_0()
         .with_animation(
             format!("{id}-ring-anim"),
             Animation::new(std::time::Duration::from_millis(RING_ANIM_DURATION_MS))
                 .with_easing(ease_in_out_cubic),
             move |this, delta| {
                 let percent = from + (to - from) * delta;
-                this.child(render_ring(percent, theme))
+                this.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            Label::new(format!("{}%", percent.round() as u32))
+                                .text_lg()
+                                .font_weight(FontWeight::BOLD),
+                        ),
+                )
+                .child(render_donut(percent, theme))
             },
         )
         .into_any_element()

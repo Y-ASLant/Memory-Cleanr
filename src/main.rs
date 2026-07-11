@@ -110,9 +110,6 @@ fn main() {
         gpui_component::init(cx);
 
         cx.bind_keys([KeyBinding::new("alt-f4", Quit, None)]);
-        cx.on_action(|_: &Quit, cx: &mut App| {
-            cx.quit();
-        });
 
         let window_options = WindowOptions {
             titlebar: Some(TitleBar::title_bar_options()),
@@ -124,18 +121,21 @@ fn main() {
 
         cx.spawn(async move |cx| {
             cx.open_window(window_options, |window, cx| {
-                // Defer the show/activate decision until the entity is alive, so
-                // a user with start_minimized=true never sees the window flash
-                // before it gets minimized inside MemoryCleanerApp::new.
-                let start_minimized = Settings::load().start_minimized;
+                let settings = Settings::load();
+                let start_minimized = settings.start_minimized;
                 let app_entity = cx.new(|cx| {
-                    let view = MemoryCleanerApp::new(window, cx);
+                    let view = MemoryCleanerApp::new(window, cx, settings);
                     if start_minimized {
                         let _ = win32::window::hide_to_tray(window);
                     } else {
                         window.activate_window();
                     }
                     view
+                });
+                let weak = app_entity.downgrade();
+                cx.on_action(move |_: &Quit, cx: &mut App| {
+                    let _ = weak.update(cx, |app, _| app.settings.save());
+                    cx.quit();
                 });
                 window.set_window_title("Memory Cleaner");
                 let _ = win32::window::remove_maximize_button(window);

@@ -275,8 +275,9 @@ pub fn optimize_drive_cache(drive_letter: char) -> Result<()> {
 }
 
 fn optimize_modified_file_cache() -> Result<()> {
+    // Fallback when not using app per-drive progress UI.
     let mut failed = Vec::new();
-    for drive_letter in get_fixed_drives() {
+    for drive_letter in fixed_drives() {
         if optimize_drive_cache(drive_letter).is_err() {
             failed.push(drive_letter);
         }

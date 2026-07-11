@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::Result;
 use gpui::*;
@@ -103,17 +103,22 @@ pub struct MemoryCleanerApp {
     pub optimize_percent: f32,
     pub optimize_status: String,
     pub settings_expanded: bool,
-    pub last_optimize_time: Option<Instant>,
 }
 
 impl MemoryCleanerApp {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let settings = Settings::load();
-        let (physical, virtual_mem) =
-            query_sections(settings.show_virtual_memory).unwrap_or_else(|e| {
-                crate::log_msg(&format!("[memory] initial query failed: {e}"));
-                (MemorySection::unavailable("物理内存"), None)
-            });
+    pub fn new(window: &mut Window, cx: &mut Context<Self>, settings: Settings) -> Self {
+        let show_virtual = settings.show_virtual_memory;
+        let (physical, virtual_mem) = query_sections(show_virtual).unwrap_or_else(|e| {
+            crate::log_msg(&format!("[memory] initial query failed: {e}"));
+            (
+                MemorySection::unavailable("物理内存"),
+                if show_virtual {
+                    Some(MemorySection::unavailable("虚拟内存"))
+                } else {
+                    None
+                },
+            )
+        });
         let window_handle = window.window_handle();
 
         let physical_ring = RingAnim::new(physical.used_percent);
@@ -126,6 +131,7 @@ impl MemoryCleanerApp {
         window.on_window_should_close(cx, move |window, app| {
             weak.update(app, |this, _| {
                 if this.settings.close_to_notification_area {
+                    this.settings.save();
                     let _ = win32::window::hide_to_tray(window);
                     false
                 } else {
@@ -155,7 +161,6 @@ impl MemoryCleanerApp {
             optimize_percent: 0.0,
             optimize_status: String::new(),
             settings_expanded: false,
-            last_optimize_time: None,
         };
 
         app.start_background_poll(cx);
@@ -246,8 +251,23 @@ impl MemoryCleanerApp {
     }
 
     pub fn refresh_memory(&mut self, cx: &mut Context<Self>) -> bool {
-        let Ok((physical, virtual_mem)) = query_sections(self.settings.show_virtual_memory) else {
-            return false;
+        let show_virtual = self.settings.show_virtual_memory;
+        let Ok((physical, virtual_mem)) = query_sections(show_virtual) else {
+            let degraded = if self.physical.is_unavailable()
+                && self.virtual_mem.as_ref().is_none_or(|v| v.is_unavailable())
+            {
+                false
+            } else {
+                self.physical = MemorySection::unavailable("物理内存");
+                self.virtual_mem = if show_virtual {
+                    Some(MemorySection::unavailable("虚拟内存"))
+                } else {
+                    None
+                };
+                self.sync_ring_targets(cx);
+                true
+            };
+            return degraded;
         };
         let phys_changed = self.physical != physical;
         let virt_changed = self.virtual_mem != virtual_mem;
@@ -303,7 +323,14 @@ impl MemoryCleanerApp {
 
     pub fn toggle_settings_expanded(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.settings_expanded = !self.settings_expanded;
-        window.resize(window_size(self.settings_expanded));
+        let target = window_size(self.settings_expanded);
+        if self.settings_expanded {
+            let current = window.bounds().size;
+            let height = current.height.max(target.height);
+            window.resize(size(target.width, height));
+        } else {
+            window.resize(target);
+        }
         cx.notify();
     }
 
@@ -439,7 +466,6 @@ impl MemoryCleanerApp {
 
         let _ = this.update(cx, |app, cx| {
             app.optimize_percent = (step_base + step_span) * 100.0;
-            let _ = app.refresh_memory(cx);
             cx.notify();
         });
 
@@ -490,8 +516,8 @@ impl MemoryCleanerApp {
             }
 
             let _ = this.update(cx, |app, cx| {
-                app.optimize_percent = (step_base + (drive_index + 1) as f32 / drive_total as f32 * step_span) * 100.0;
-                let _ = app.refresh_memory(cx);
+                app.optimize_percent =
+                    (step_base + (drive_index + 1) as f32 / drive_total as f32 * step_span) * 100.0;
                 cx.notify();
             });
         }
@@ -506,9 +532,13 @@ impl MemoryCleanerApp {
 
         let areas = self.settings.memory_areas();
         let Ok(steps) = optimize::step_plan(areas) else {
+            self.optimize_status = "请先选择清理区域".into();
+            cx.notify();
             return;
         };
         if steps.is_empty() {
+            self.optimize_status = "请先选择清理区域".into();
+            cx.notify();
             return;
         }
 
@@ -555,7 +585,6 @@ impl MemoryCleanerApp {
             let _ = this.update(cx, |app, cx| {
                 app.is_optimizing = false;
                 app.optimize_percent = 0.0;
-                app.last_optimize_time = Some(Instant::now());
                 cx.notify();
             });
         })
@@ -580,11 +609,10 @@ impl Render for MemoryCleanerApp {
         };
 
         let bg = cx.theme().background;
-        let physical = self.physical.clone();
-        let virtual_mem = self.virtual_mem.clone();
         let physical_ring = self.physical_ring;
         let virtual_ring = self.virtual_ring;
-        let show_virtual = virtual_mem.is_some();
+        let show_virtual = self.virtual_mem.is_some();
+        let settings_expanded = self.settings_expanded;
 
         let physical_card = GroupBox::new()
             .id("physical-memory-card")
@@ -597,7 +625,7 @@ impl Render for MemoryCleanerApp {
                     .items_center()
                     .py(px(crate::ui::memory_card::MEMORY_CARD_PY))
                     .child(render_memory_card(
-                        &physical,
+                        &self.physical,
                         physical_ring,
                         "physical-memory",
                         true,
@@ -606,9 +634,8 @@ impl Render for MemoryCleanerApp {
             );
 
         let memory_row = if show_virtual {
-            h_flex()
+            let mut row = h_flex()
                 .w_full()
-                .flex_shrink_0()
                 .gap(px(SECTION_GAP))
                 .child(div().flex_1().min_w_0().child(physical_card))
                 .child(div().flex_1().min_w_0().child({
@@ -623,27 +650,38 @@ impl Render for MemoryCleanerApp {
                                 .items_center()
                                 .py(px(crate::ui::memory_card::MEMORY_CARD_PY))
                                 .child(render_memory_card(
-                                    virtual_mem.as_ref().expect("virtual card requires data"),
+                                    self.virtual_mem
+                                        .as_ref()
+                                        .expect("virtual card requires data"),
                                     virtual_ring,
                                     "virtual-memory",
                                     false,
                                     cx,
                                 )),
                         )
-                }))
-                .into_any_element()
+                }));
+            if settings_expanded {
+                row = row.min_h(px(100.)).max_h(px(160.));
+            } else {
+                row = row.flex_shrink_0();
+            }
+            row.into_any_element()
         } else {
-            h_flex()
+            let mut row = h_flex()
                 .w_full()
-                .flex_shrink_0()
                 .justify_center()
                 .child(
                     div()
                         .w_full()
                         .max_w(px(SINGLE_CARD_MAX_WIDTH))
                         .child(physical_card),
-                )
-                .into_any_element()
+                );
+            if settings_expanded {
+                row = row.min_h(px(100.)).max_h(px(160.));
+            } else {
+                row = row.flex_shrink_0();
+            }
+            row.into_any_element()
         };
 
         div().relative().w_full().h_full().overflow_hidden().child(
@@ -662,7 +700,7 @@ impl Render for MemoryCleanerApp {
                         .p(px(CONTENT_PADDING))
                         .gap(px(SECTION_GAP))
                         .child(memory_row)
-                        .child(render_settings_bottom(self, window, cx)),
+                        .child(render_settings_bottom(self, cx)),
                 ),
         )
     }
