@@ -126,6 +126,8 @@ fn switch_row_app(
     foreground: Hsla,
     on_click: impl Fn(&bool, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
+    let icon = config.icon;
+
     h_flex()
         .w_full()
         .items_center()
@@ -133,29 +135,49 @@ fn switch_row_app(
         .gap_3()
         .py(px(3.))
         .child(
-            h_flex()
+            v_flex()
                 .flex_1()
                 .min_w_0()
-                .items_start()
-                .gap_2()
+                .gap(px(1.))
                 .child(
-                    div()
-                        .flex_shrink_0()
-                        .pt(px(1.))
-                        .child(Icon::new(config.icon).small().text_color(muted)),
-                )
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .gap(px(1.))
+                    h_flex()
+                        .w_full()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .flex()
+                                .items_center()
+                                .child(Icon::new(icon.clone()).small().text_color(muted)),
+                        )
                         .child(
                             Label::new(config.title)
                                 .text_sm()
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(foreground),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .w_full()
+                        .items_start()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .invisible()
+                                .flex()
+                                .items_center()
+                                .child(Icon::new(icon).small()),
                         )
-                        .child(Label::new(config.description).text_xs().text_color(muted)),
+                        .child(
+                            Label::new(config.description)
+                                .text_xs()
+                                .text_color(muted)
+                                .flex_1()
+                                .min_w_0(),
+                        ),
                 ),
         )
         .child(
