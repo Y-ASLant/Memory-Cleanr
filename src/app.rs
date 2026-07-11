@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use gpui::*;
+use gpui_component::v_flex;
 use gpui_component::ActiveTheme;
+use gpui_component::WindowExt;
 use smol::Timer;
 
 use crate::memory::{MemorySection, MemoryStatus};
@@ -319,6 +321,30 @@ impl MemoryCleanerApp {
         self.settings.memory_areas = areas.bits();
         self.queue_settings_save(cx);
         cx.notify();
+    }
+
+    pub fn open_window_behavior_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::ui::settings_page::render_window_behavior_dialog;
+
+        let weak = cx.weak_entity();
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let weak = weak.clone();
+            dialog
+                .title("窗口行为")
+                .w(px(400.))
+                .overlay_closable(true)
+                .content({
+                    let weak = weak.clone();
+                    move |content, _window, cx| {
+                        content.child(
+                            v_flex()
+                                .w_full()
+                                .p(px(CONTENT_PADDING))
+                                .child(render_window_behavior_dialog(weak.clone(), cx)),
+                        )
+                    }
+                })
+        });
     }
 
     pub fn toggle_settings_expanded(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -699,5 +725,6 @@ impl Render for MemoryCleanerApp {
                         .child(render_settings_bottom(self, cx)),
                 ),
         )
+        .children(gpui_component::Root::render_dialog_layer(window, cx))
     }
 }

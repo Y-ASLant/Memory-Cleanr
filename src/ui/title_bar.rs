@@ -91,7 +91,7 @@ fn title_bar_action_control(
         .child(Icon::new(icon).small())
 }
 
-fn settings_toggle_control(
+fn expand_toggle_control(
     app: &MemoryCleanerApp,
     foreground: Hsla,
     hover_fg: Hsla,
@@ -106,7 +106,7 @@ fn settings_toggle_control(
     };
 
     title_bar_action_control(
-        "titlebar-settings-toggle",
+        "titlebar-expand-toggle",
         icon,
         foreground,
         hover_fg,
@@ -114,6 +114,25 @@ fn settings_toggle_control(
         active_bg,
         app_cx,
         |app, window, cx| app.toggle_settings_expanded(window, cx),
+    )
+}
+
+fn window_settings_control(
+    foreground: Hsla,
+    hover_fg: Hsla,
+    hover_bg: Hsla,
+    active_bg: Hsla,
+    app_cx: &mut Context<MemoryCleanerApp>,
+) -> impl IntoElement {
+    title_bar_action_control(
+        "titlebar-window-settings",
+        IconName::Settings2,
+        foreground,
+        hover_fg,
+        hover_bg,
+        active_bg,
+        app_cx,
+        |app, window, cx| app.open_window_behavior_dialog(window, cx),
     )
 }
 
@@ -216,7 +235,14 @@ pub fn render_title_bar(
                             .items_center()
                             .flex_shrink_0()
                             .h_full()
-                            .child(settings_toggle_control(
+                            .child(window_settings_control(
+                                foreground,
+                                hover_fg,
+                                hover_bg,
+                                active_bg,
+                                cx,
+                            ))
+                            .child(expand_toggle_control(
                                 app,
                                 foreground,
                                 hover_fg,

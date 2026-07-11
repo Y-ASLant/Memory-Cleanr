@@ -122,12 +122,11 @@ struct SwitchRowConfig {
     checked: bool,
 }
 
-fn switch_row(
+fn switch_row_app(
     config: SwitchRowConfig,
     muted: Hsla,
     foreground: Hsla,
-    cx: &mut Context<MemoryCleanerApp>,
-    on_click: impl Fn(&mut MemoryCleanerApp, &bool, &mut Window, &mut Context<MemoryCleanerApp>) + 'static,
+    on_click: impl Fn(&bool, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     h_flex()
         .w_full()
@@ -171,25 +170,26 @@ fn switch_row(
                 .child(
                     Switch::new(config.id)
                         .checked(config.checked)
-                        .on_click(cx.listener(on_click)),
+                        .on_click(on_click),
                 ),
         )
 }
 
-fn render_window_behavior(
-    app: &MemoryCleanerApp,
-    cx: &mut Context<MemoryCleanerApp>,
+pub fn render_window_behavior_dialog(
+    weak: WeakEntity<MemoryCleanerApp>,
+    cx: &App,
 ) -> impl IntoElement {
-    let settings = &app.settings;
+    let app = weak.upgrade().expect("MemoryCleanerApp entity should exist");
+    let settings = app.read(cx).settings.clone();
     let muted = cx.theme().muted_foreground;
     let foreground = cx.theme().foreground;
 
     v_flex()
         .w_full()
         .gap(px(2.))
-        .child(switch_row(
+        .child(switch_row_app(
             SwitchRowConfig {
-                id: "switch-always-on-top",
+                id: "dialog-switch-always-on-top",
                 icon: IconName::Star,
                 title: "窗口置顶",
                 description: "窗口始终保持在最前面",
@@ -197,14 +197,18 @@ fn render_window_behavior(
             },
             muted,
             foreground,
-            cx,
-            |app, checked, window, cx| {
-                app.set_always_on_top(*checked, window, cx);
+            {
+                let weak = weak.clone();
+                move |checked, window, cx| {
+                    let _ = weak.update(cx, |app, cx| {
+                        app.set_always_on_top(*checked, window, cx);
+                    });
+                }
             },
         ))
-        .child(switch_row(
+        .child(switch_row_app(
             SwitchRowConfig {
-                id: "switch-close-to-tray",
+                id: "dialog-switch-close-to-tray",
                 icon: IconName::Minimize,
                 title: "关闭时隐藏到托盘",
                 description: "点击关闭按钮时最小化到系统托盘",
@@ -212,14 +216,18 @@ fn render_window_behavior(
             },
             muted,
             foreground,
-            cx,
-            |app, checked, _, cx| {
-                app.set_close_to_tray(*checked, cx);
+            {
+                let weak = weak.clone();
+                move |checked, _window, cx| {
+                    let _ = weak.update(cx, |app, cx| {
+                        app.set_close_to_tray(*checked, cx);
+                    });
+                }
             },
         ))
-        .child(switch_row(
+        .child(switch_row_app(
             SwitchRowConfig {
-                id: "switch-start-minimized",
+                id: "dialog-switch-start-minimized",
                 icon: IconName::Settings,
                 title: "启动时最小化",
                 description: "启动后直接进入托盘，不显示主窗口",
@@ -227,9 +235,13 @@ fn render_window_behavior(
             },
             muted,
             foreground,
-            cx,
-            |app, checked, _, cx| {
-                app.set_start_minimized(*checked, cx);
+            {
+                let weak = weak.clone();
+                move |checked, _window, cx| {
+                    let _ = weak.update(cx, |app, cx| {
+                        app.set_start_minimized(*checked, cx);
+                    });
+                }
             },
         ))
 }
@@ -360,29 +372,17 @@ fn render_settings_details(
     div()
         .id("settings-details-panel")
         .w_full()
-        .flex_1()
-        .min_h_0()
+        .flex_shrink_0()
         .rounded(radius)
         .border_1()
         .border_color(border)
-        .overflow_hidden()
         .child(
-            div()
-                .id("settings-details-scroll")
+            v_flex()
                 .w_full()
-                .h_full()
-                .overflow_y_scroll()
-                .child(
-                    v_flex()
-                        .w_full()
-                        .p(px(CONTENT_PADDING))
-                        .gap(px(SECTION_GAP))
-                        .child(panel_section_title(IconName::Settings2, "窗口行为"))
-                        .child(render_window_behavior(app, cx))
-                        .child(div().w_full().h(px(1.)).bg(border))
-                        .child(panel_section_title(IconName::Settings, "清理区域"))
-                        .child(render_cleanup_areas(app, muted, cx)),
-                ),
+                .p(px(CONTENT_PADDING))
+                .gap(px(SECTION_GAP))
+                .child(panel_section_title(IconName::Settings, "清理区域"))
+                .child(render_cleanup_areas(app, muted, cx)),
         )
 }
 
@@ -399,7 +399,8 @@ pub fn render_settings_bottom(
         .id("settings-bottom-column")
         .w_full()
         .flex_1()
-        .min_h_0();
+        .min_h_0()
+        .gap(px(SECTION_GAP));
 
     if app.settings_expanded {
         column = column.child(render_settings_details(app, border, radius, muted, cx));
