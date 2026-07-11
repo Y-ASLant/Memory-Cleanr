@@ -1,5 +1,4 @@
 use gpui::*;
-use gpui::prelude::FluentBuilder;
 use gpui_component::{
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
@@ -11,21 +10,16 @@ use gpui_component::{
     ActiveTheme, Disableable, Icon, IconName, Sizable,
 };
 
-use crate::app::MemoryCleanerApp;
+use crate::app::{MemoryCleanerApp, CONTENT_PADDING};
 use crate::optimize::MemoryAreas;
 
-const BOTTOM_COLUMN_GAP: f32 = 10.;
-const BOTTOM_INSET: f32 = 10.;
+const SECTION_GAP: f32 = 4.;
+const ROW_GAP: f32 = 4.;
 
-const PANEL_HEADER_PY: f32 = 6.;
-const SETTINGS_PANEL_EXTRA_V: f32 = 4.;
-const PANEL_BODY_PT: f32 = 4. + SETTINGS_PANEL_EXTRA_V / 2.;
-const PANEL_BODY_PB: f32 = SETTINGS_PANEL_EXTRA_V / 2.;
-const PANEL_TITLE_ROW_H: f32 = 18.;
-const CLEANUP_BUTTON_PT: f32 = 4.;
-const STATUS_LINE_PB: f32 = 6.;
+const CLEANUP_BUTTON_H: f32 = 48.;
+const BUTTON_STATUS_TRUNCATE_CHARS: usize = 36;
 
-fn section_title(icon: IconName, label: &'static str) -> impl IntoElement {
+fn panel_section_title(icon: IconName, label: &'static str) -> impl IntoElement {
     h_flex()
         .w_full()
         .items_center()
@@ -38,21 +32,6 @@ fn section_title(icon: IconName, label: &'static str) -> impl IntoElement {
         )
 }
 
-fn column_divider(border: Hsla) -> Div {
-    div()
-        .w(px(1.))
-        .flex_shrink_0()
-        .bg(border)
-}
-
-fn memory_area_tooltip(area: MemoryAreas) -> &'static str {
-    match area {
-        MemoryAreas::STANDBY_LIST => "清空普通待机列表（与低优先级二选一）",
-        MemoryAreas::STANDBY_LIST_LOW_PRIORITY => "清空低优先级待机列表（与普通待机二选一）",
-        _ => "勾选后将在一键清理时执行",
-    }
-}
-
 fn memory_area_checkbox(
     id: &'static str,
     area: MemoryAreas,
@@ -63,9 +42,7 @@ fn memory_area_checkbox(
     let mut checkbox = Checkbox::new(id)
         .label(area.label())
         .text_sm()
-        .py_1()
         .checked(checked)
-        .tooltip(memory_area_tooltip(area))
         .on_click(cx.listener(move |app, enabled, _, cx| {
             app.set_memory_area(area, *enabled, cx);
         }));
@@ -74,94 +51,80 @@ fn memory_area_checkbox(
         checkbox = checkbox.disabled(true);
     }
 
-    checkbox
+    div().flex_1().min_w_0().child(checkbox)
 }
 
-fn cleanup_areas_grid(
+fn cleanup_area_row(
+    left: (&'static str, MemoryAreas),
+    right: (&'static str, MemoryAreas),
     app: &MemoryCleanerApp,
-    muted_foreground: Hsla,
+    cx: &mut Context<MemoryCleanerApp>,
+) -> impl IntoElement {
+    h_flex()
+        .w_full()
+        .gap_4()
+        .child(memory_area_checkbox(left.0, left.1, app, cx))
+        .child(memory_area_checkbox(right.0, right.1, app, cx))
+}
+
+fn render_cleanup_areas(
+    app: &MemoryCleanerApp,
+    muted: Hsla,
     cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
     v_flex()
         .w_full()
-        .gap_1()
+        .gap(px(ROW_GAP))
         .child(
-            Label::new("待机列表两项互斥，仅可勾选其一")
-                .text_xs()
-                .text_color(muted_foreground),
-        )
-        .child(
-            h_flex()
+            div()
                 .w_full()
-                .gap_4()
+                .rounded(px(4.))
+                .px_2()
+                .py_1()
+                .bg(muted.opacity(0.12))
                 .child(
-                    v_flex()
-                        .flex_1()
-                        .gap_1()
-                        .child(memory_area_checkbox(
-                            "inline-standby-normal",
-                            MemoryAreas::STANDBY_LIST,
-                            app,
-                            cx,
-                        ))
-                        .child(memory_area_checkbox(
-                            "inline-standby-low",
-                            MemoryAreas::STANDBY_LIST_LOW_PRIORITY,
-                            app,
-                            cx,
-                        ))
-                        .child(memory_area_checkbox(
-                            "inline-area-working-set",
-                            MemoryAreas::WORKING_SET,
-                            app,
-                            cx,
-                        ))
-                        .child(memory_area_checkbox(
-                            "inline-area-system-file-cache",
-                            MemoryAreas::SYSTEM_FILE_CACHE,
-                            app,
-                            cx,
-                        )),
-                )
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .gap_1()
-                        .child(memory_area_checkbox(
-                            "inline-area-combined",
-                            MemoryAreas::COMBINED_PAGE_LIST,
-                            app,
-                            cx,
-                        ))
-                        .child(memory_area_checkbox(
-                            "inline-area-modified-file",
-                            MemoryAreas::MODIFIED_FILE_CACHE,
-                            app,
-                            cx,
-                        ))
-                        .child(memory_area_checkbox(
-                            "inline-area-modified-page",
-                            MemoryAreas::MODIFIED_PAGE_LIST,
-                            app,
-                            cx,
-                        ))
-                        .child(memory_area_checkbox(
-                            "inline-area-registry-cache",
-                            MemoryAreas::REGISTRY_CACHE,
-                            app,
-                            cx,
-                        )),
+                    Label::new("提示：「待机列表」与「待机列表(低优先级)」只能勾选其一")
+                        .text_xs()
+                        .text_color(muted),
                 ),
         )
+        .child(cleanup_area_row(
+            ("area-standby", MemoryAreas::STANDBY_LIST),
+            ("area-standby-low", MemoryAreas::STANDBY_LIST_LOW_PRIORITY),
+            app,
+            cx,
+        ))
+        .child(cleanup_area_row(
+            ("area-working-set", MemoryAreas::WORKING_SET),
+            ("area-system-cache", MemoryAreas::SYSTEM_FILE_CACHE),
+            app,
+            cx,
+        ))
+        .child(cleanup_area_row(
+            ("area-modified-page", MemoryAreas::MODIFIED_PAGE_LIST),
+            ("area-combined", MemoryAreas::COMBINED_PAGE_LIST),
+            app,
+            cx,
+        ))
+        .child(cleanup_area_row(
+            ("area-modified-file", MemoryAreas::MODIFIED_FILE_CACHE),
+            ("area-registry", MemoryAreas::REGISTRY_CACHE),
+            app,
+            cx,
+        ))
 }
 
-fn switch_row(
+struct SwitchRowConfig {
     id: &'static str,
     icon: IconName,
     title: &'static str,
     description: &'static str,
     checked: bool,
-    muted_foreground: Hsla,
+}
+
+fn switch_row(
+    config: SwitchRowConfig,
+    muted: Hsla,
     foreground: Hsla,
     cx: &mut Context<MemoryCleanerApp>,
     on_click: impl Fn(&mut MemoryCleanerApp, &bool, &mut Window, &mut Context<MemoryCleanerApp>) + 'static,
@@ -170,51 +133,69 @@ fn switch_row(
         .w_full()
         .items_center()
         .justify_between()
-        .py_1()
+        .gap_3()
+        .py(px(3.))
         .child(
             h_flex()
-                .items_center()
-                .gap_2()
+                .flex_1()
                 .min_w_0()
+                .items_start()
+                .gap_2()
                 .child(
-                    Icon::new(icon)
-                        .small()
-                        .text_color(muted_foreground),
+                    div()
+                        .flex_shrink_0()
+                        .pt(px(1.))
+                        .child(Icon::new(config.icon).small().text_color(muted)),
                 )
                 .child(
-                    Label::new(title)
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(foreground),
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap(px(1.))
+                        .child(
+                            Label::new(config.title)
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(foreground),
+                        )
+                        .child(
+                            Label::new(config.description)
+                                .text_xs()
+                                .text_color(muted),
+                        ),
                 ),
         )
         .child(
-            Switch::new(id)
-                .checked(checked)
-                .tooltip(description)
-                .on_click(cx.listener(on_click)),
+            div()
+                .flex_shrink_0()
+                .child(
+                    Switch::new(config.id)
+                        .checked(config.checked)
+                        .on_click(cx.listener(on_click)),
+                ),
         )
 }
 
-fn render_settings_options_content(
+fn render_window_behavior(
     app: &MemoryCleanerApp,
-    muted_foreground: Hsla,
-    foreground: Hsla,
     cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
     let settings = &app.settings;
+    let muted = cx.theme().muted_foreground;
+    let foreground = cx.theme().foreground;
 
     v_flex()
         .w_full()
-        .h_full()
-        .justify_between()
+        .gap(px(2.))
         .child(switch_row(
-            "inline-always-on-top",
-            IconName::Star,
-            "窗口置顶",
-            "窗口始终保持在最前面",
-            settings.always_on_top,
-            muted_foreground,
+            SwitchRowConfig {
+                id: "switch-always-on-top",
+                icon: IconName::Star,
+                title: "窗口置顶",
+                description: "窗口始终保持在最前面",
+                checked: settings.always_on_top,
+            },
+            muted,
             foreground,
             cx,
             |app, checked, window, cx| {
@@ -222,12 +203,14 @@ fn render_settings_options_content(
             },
         ))
         .child(switch_row(
-            "inline-close-to-tray",
-            IconName::Minimize,
-            "关闭时隐藏到托盘",
-            "关闭窗口时最小化到系统托盘",
-            settings.close_to_notification_area,
-            muted_foreground,
+            SwitchRowConfig {
+                id: "switch-close-to-tray",
+                icon: IconName::Minimize,
+                title: "关闭时隐藏到托盘",
+                description: "点击关闭按钮时最小化到系统托盘",
+                checked: settings.close_to_notification_area,
+            },
+            muted,
             foreground,
             cx,
             |app, checked, _, cx| {
@@ -235,12 +218,14 @@ fn render_settings_options_content(
             },
         ))
         .child(switch_row(
-            "inline-start-minimized",
-            IconName::Settings,
-            "启动时最小化",
-            "程序启动时自动最小化到托盘",
-            settings.start_minimized,
-            muted_foreground,
+            SwitchRowConfig {
+                id: "switch-start-minimized",
+                icon: IconName::Settings,
+                title: "启动时最小化",
+                description: "启动后直接进入托盘，不显示主窗口",
+                checked: settings.start_minimized,
+            },
+            muted,
             foreground,
             cx,
             |app, checked, _, cx| {
@@ -249,93 +234,160 @@ fn render_settings_options_content(
         ))
 }
 
-fn cleanup_button_label(app: &MemoryCleanerApp) -> String {
-    if app.is_optimizing {
-        if app.optimize_step.is_empty() {
-            "清理中...".into()
-        } else {
-            app.optimize_step.clone()
-        }
-    } else {
-        "一键清理".into()
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
     }
+    let truncated: String = text.chars().take(max_chars).collect();
+    format!("{truncated}…")
 }
 
-fn render_cleanup_section(
-    app: &MemoryCleanerApp,
-    border: Hsla,
-    inset: Pixels,
-    cx: &mut Context<MemoryCleanerApp>,
-) -> impl IntoElement {
-    let areas_empty = app.settings.memory_areas().is_empty();
-    let show_progress = app.is_optimizing || app.optimize_percent >= 100.0;
-    let status_visible = !app.optimize_status.is_empty();
-    let status_color = if app.optimize_status.contains("失败") {
+fn status_line_text(app: &MemoryCleanerApp) -> Option<String> {
+    if app.is_optimizing {
+        return Some(if app.optimize_step.is_empty() {
+            "正在准备清理…".into()
+        } else {
+            app.optimize_step.clone()
+        });
+    }
+
+    if !app.optimize_status.is_empty() {
+        return Some(truncate_chars(
+            &app.optimize_status,
+            BUTTON_STATUS_TRUNCATE_CHARS,
+        ));
+    }
+
+    None
+}
+
+fn status_line_color(app: &MemoryCleanerApp, cx: &App) -> Hsla {
+    if app.is_optimizing {
+        return cx.theme().foreground;
+    }
+    if app.optimize_status.contains("失败") {
         cx.theme().danger
     } else {
         cx.theme().muted_foreground
-    };
-
-    let mut button = Button::new("inline-optimize")
-        .label(cleanup_button_label(app))
-        .primary()
-        .w_full()
-        .px_8()
-        .disabled(areas_empty || app.is_optimizing)
-        .tooltip(if areas_empty {
-            "请先选择清理区域"
-        } else if app.is_optimizing {
-            "正在清理内存"
-        } else {
-            "开始清理内存"
-        });
-
-    if show_progress {
-        button = button.icon(
-            ProgressCircle::new("inline-optimize-progress").value(app.optimize_percent),
-        );
     }
-
-    v_flex()
-        .w_full()
-        .flex_shrink_0()
-        .px(inset)
-        .pb(px(STATUS_LINE_PB))
-        .pt(px(CLEANUP_BUTTON_PT))
-        .border_t_1()
-        .border_color(border)
-        .gap_1()
-        .child(button.on_click(cx.listener(|app, _, _, cx| {
-            app.run_optimize(cx);
-        })))
-        .child(
-            div()
-                .w_full()
-                .min_h(px(16.))
-                .when(status_visible, |this| {
-                    this.child(
-                        Label::new(app.optimize_status.clone())
-                            .text_xs()
-                            .text_color(status_color),
-                    )
-                }),
-        )
 }
 
-pub fn render_settings_bottom(
+fn split_result_status(status: &str) -> (String, Option<String>) {
+    if let Some(pos) = status.rfind('。') {
+        let after = pos + '。'.len_utf8();
+        let summary = status[..after].trim().to_string();
+        let detail = status.get(after..).unwrap_or("").trim();
+        if detail.is_empty() {
+            (summary, None)
+        } else {
+            (summary, Some(detail.to_string()))
+        }
+    } else {
+        (truncate_chars(status, BUTTON_STATUS_TRUNCATE_CHARS), None)
+    }
+}
+
+fn render_cleanup_button_content(
     app: &MemoryCleanerApp,
     cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
-    let theme = cx.theme();
-    let border = theme.border;
-    let radius = theme.radius;
-    let muted_foreground = theme.muted_foreground;
-    let foreground = theme.foreground;
-    let gap = px(BOTTOM_COLUMN_GAP);
-    let inset = px(BOTTOM_INSET);
+    let color = status_line_color(app, cx);
+
+    if app.is_optimizing {
+        let line = status_line_text(app).unwrap_or_else(|| "正在准备清理…".into());
+        return h_flex()
+            .items_center()
+            .justify_center()
+            .gap_2()
+            .child(
+                ProgressCircle::new("inline-optimize-progress").value(app.optimize_percent),
+            )
+            .child(
+                Label::new(line)
+                    .text_sm()
+                    .text_color(color)
+                    .truncate(),
+            )
+            .into_any_element();
+    }
+
+    if !app.optimize_status.is_empty() {
+        let (summary, detail) = split_result_status(&app.optimize_status);
+        if let Some(detail) = detail {
+            return h_flex()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .child(
+                    Label::new(summary)
+                        .text_sm()
+                        .text_color(color)
+                        .truncate(),
+                )
+                .child(
+                    Label::new(detail)
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .truncate(),
+                )
+                .into_any_element();
+        }
+        return Label::new(summary)
+            .text_sm()
+            .text_color(color)
+            .truncate()
+            .into_any_element();
+    }
+
+    Label::new("一键清理")
+        .text_sm()
+        .font_weight(FontWeight::MEDIUM)
+        .into_any_element()
+}
+
+fn render_action_footer(
+    app: &MemoryCleanerApp,
+    cx: &mut Context<MemoryCleanerApp>,
+) -> impl IntoElement {
+    let areas_empty = app.settings.memory_areas().is_empty();
+    let button_tooltip = if areas_empty {
+        "请先选择清理区域".to_string()
+    } else if app.is_optimizing {
+        status_line_text(app).unwrap_or_else(|| "正在清理内存".into())
+    } else if !app.optimize_status.is_empty() {
+        app.optimize_status.clone()
+    } else {
+        "开始清理内存".to_string()
+    };
+
+    let button = Button::new("inline-optimize")
+        .primary()
+        .w_full()
+        .flex_shrink_0()
+        .h(px(CLEANUP_BUTTON_H))
+        .disabled(areas_empty || app.is_optimizing)
+        .tooltip(button_tooltip)
+        .child(render_cleanup_button_content(app, cx))
+        .on_click(cx.listener(|app, _, _, cx| {
+            app.run_optimize(cx);
+        }));
 
     div()
-        .id("settings-bottom-panel")
+        .id("cleanup-footer")
+        .w_full()
+        .flex_shrink_0()
+        .child(button)
+}
+
+fn render_settings_details(
+    app: &MemoryCleanerApp,
+    border: Hsla,
+    radius: Pixels,
+    muted: Hsla,
+    cx: &mut Context<MemoryCleanerApp>,
+) -> impl IntoElement {
+    div()
+        .id("settings-details-panel")
         .w_full()
         .flex_1()
         .min_h_0()
@@ -344,62 +396,46 @@ pub fn render_settings_bottom(
         .border_color(border)
         .overflow_hidden()
         .child(
-            v_flex()
+            div()
+                .id("settings-details-scroll")
                 .w_full()
                 .h_full()
-                .justify_start()
+                .overflow_y_scroll()
                 .child(
-                    h_flex()
+                    v_flex()
                         .w_full()
-                        .flex_shrink_0()
-                        .items_center()
-                        .gap(gap)
-                        .px(inset)
-                        .py(px(PANEL_HEADER_PY))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(section_title(IconName::Settings2, "设置选项")),
-                        )
-                        .child(column_divider(border).h(px(PANEL_TITLE_ROW_H)))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(section_title(IconName::Settings, "清理区域")),
-                        ),
-                )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .flex_1()
-                        .min_h_0()
-                        .items_stretch()
-                        .gap(gap)
-                        .px(inset)
-                        .pb(px(PANEL_BODY_PB))
-                        .pt(px(PANEL_BODY_PT))
-                        .child(
-                            v_flex()
-                                .flex_1()
-                                .min_w_0()
-                                .h_full()
-                                .child(render_settings_options_content(
-                                    app,
-                                    muted_foreground,
-                                    foreground,
-                                    cx,
-                                )),
-                        )
-                        .child(column_divider(border).self_stretch())
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(cleanup_areas_grid(app, muted_foreground, cx)),
-                        ),
-                )
-                .child(render_cleanup_section(app, border, inset, cx)),
+                        .p(px(CONTENT_PADDING))
+                        .gap(px(SECTION_GAP))
+                        .child(panel_section_title(IconName::Settings2, "窗口行为"))
+                        .child(render_window_behavior(app, cx))
+                        .child(div().w_full().h(px(1.)).bg(border))
+                        .child(panel_section_title(IconName::Settings, "清理区域"))
+                        .child(render_cleanup_areas(app, muted, cx)),
+                ),
         )
+}
+
+pub fn render_settings_bottom(
+    app: &MemoryCleanerApp,
+    _window: &mut Window,
+    cx: &mut Context<MemoryCleanerApp>,
+) -> impl IntoElement {
+    let theme = cx.theme();
+    let border = theme.border;
+    let radius = theme.radius;
+    let muted = theme.muted_foreground;
+
+    let mut column = v_flex()
+        .id("settings-bottom-column")
+        .w_full()
+        .flex_1()
+        .min_h_0();
+
+    if app.settings_expanded {
+        column = column.child(render_settings_details(app, border, radius, muted, cx));
+    } else {
+        column = column.child(div().flex_1().min_h_0());
+    }
+
+    column.child(render_action_footer(app, cx))
 }

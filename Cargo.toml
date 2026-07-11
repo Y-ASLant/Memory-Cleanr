@@ -44,3 +44,6 @@ panic = "abort"
 
 [build-dependencies]
 winres = "0.1"
+
+[patch.crates-io]
+proc-macro-error2 = { path = "vendor/proc-macro-error2" }

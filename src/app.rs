@@ -16,15 +16,26 @@ pub const TRAY_POLL: Duration = Duration::from_millis(200);
 const SETTINGS_SAVE_DEBOUNCE: Duration = Duration::from_millis(300);
 const OPTIMIZE_RESULT_DISPLAY: Duration = Duration::from_secs(5);
 
-const WINDOW_WIDTH: f32 = 640.;
-const WINDOW_HEIGHT: f32 = 460.;
-const CONTENT_PADDING: f32 = 10.;
-const CONTENT_PADDING_BOTTOM: f32 = 10.;
-const SECTION_GAP: f32 = 8.;
+const WINDOW_WIDTH: f32 = 560.;
+const WINDOW_HEIGHT_COLLAPSED: f32 = 300.;
+const WINDOW_HEIGHT_EXPANDED: f32 = 620.;
+const WINDOW_MIN_WIDTH: f32 = 560.;
+const WINDOW_MIN_HEIGHT: f32 = 300.;
+pub const CONTENT_PADDING: f32 = 4.;
+const SECTION_GAP: f32 = 4.;
 const SINGLE_CARD_MAX_WIDTH: f32 = 360.;
 
-pub fn window_size() -> Size<Pixels> {
-    size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT))
+pub fn window_size(expanded: bool) -> Size<Pixels> {
+    let height = if expanded {
+        WINDOW_HEIGHT_EXPANDED
+    } else {
+        WINDOW_HEIGHT_COLLAPSED
+    };
+    size(px(WINDOW_WIDTH), px(height))
+}
+
+pub fn window_min_size() -> Size<Pixels> {
+    size(px(WINDOW_MIN_WIDTH), px(WINDOW_MIN_HEIGHT))
 }
 
 fn build_section(
@@ -91,6 +102,7 @@ pub struct MemoryCleanerApp {
     pub optimize_step: String,
     pub optimize_percent: f32,
     pub optimize_status: String,
+    pub settings_expanded: bool,
     pub last_optimize_time: Option<Instant>,
 }
 
@@ -142,6 +154,7 @@ impl MemoryCleanerApp {
             optimize_step: String::new(),
             optimize_percent: 0.0,
             optimize_status: String::new(),
+            settings_expanded: false,
             last_optimize_time: None,
         };
 
@@ -285,6 +298,12 @@ impl MemoryCleanerApp {
         }
         self.settings.memory_areas = areas.bits();
         self.queue_settings_save(cx);
+        cx.notify();
+    }
+
+    pub fn toggle_settings_expanded(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings_expanded = !self.settings_expanded;
+        window.resize(window_size(self.settings_expanded));
         cx.notify();
     }
 
@@ -631,7 +650,7 @@ impl Render for MemoryCleanerApp {
             v_flex()
                 .w_full()
                 .h_full()
-                .justify_start()
+                .overflow_hidden()
                 .bg(bg)
                 .child(render_title_bar(self, window, cx))
                 .child(
@@ -639,14 +658,11 @@ impl Render for MemoryCleanerApp {
                         .w_full()
                         .flex_1()
                         .min_h_0()
-                        .justify_start()
-                        .items_start()
-                        .px(px(CONTENT_PADDING))
-                        .pt(px(CONTENT_PADDING))
-                        .pb(px(CONTENT_PADDING_BOTTOM))
+                        .overflow_hidden()
+                        .p(px(CONTENT_PADDING))
                         .gap(px(SECTION_GAP))
                         .child(memory_row)
-                        .child(render_settings_bottom(self, cx)),
+                        .child(render_settings_bottom(self, window, cx)),
                 ),
         )
     }

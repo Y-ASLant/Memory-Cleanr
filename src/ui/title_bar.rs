@@ -62,6 +62,61 @@ fn title_bar_control(
         .child(Icon::new(icon).small())
 }
 
+fn title_bar_action_control(
+    id: &'static str,
+    icon: IconName,
+    foreground: Hsla,
+    hover_fg: Hsla,
+    hover_bg: Hsla,
+    active_bg: Hsla,
+    app_cx: &mut Context<MemoryCleanerApp>,
+    on_click: impl Fn(&mut MemoryCleanerApp, &mut Window, &mut Context<MemoryCleanerApp>) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .flex()
+        .w(TITLE_BAR_HEIGHT)
+        .h_full()
+        .flex_shrink_0()
+        .justify_center()
+        .content_center()
+        .items_center()
+        .text_color(foreground)
+        .hover(|style| style.bg(hover_bg).text_color(hover_fg))
+        .active(|style| style.bg(active_bg).text_color(hover_fg))
+        .on_click(app_cx.listener(move |app, _, window, cx| {
+            cx.stop_propagation();
+            on_click(app, window, cx);
+        }))
+        .child(Icon::new(icon).small())
+}
+
+fn settings_toggle_control(
+    app: &MemoryCleanerApp,
+    foreground: Hsla,
+    hover_fg: Hsla,
+    hover_bg: Hsla,
+    active_bg: Hsla,
+    app_cx: &mut Context<MemoryCleanerApp>,
+) -> impl IntoElement {
+    let icon = if app.settings_expanded {
+        IconName::ChevronUp
+    } else {
+        IconName::ChevronDown
+    };
+
+    title_bar_action_control(
+        "titlebar-settings-toggle",
+        icon,
+        foreground,
+        hover_fg,
+        hover_bg,
+        active_bg,
+        app_cx,
+        |app, window, cx| app.toggle_settings_expanded(window, cx),
+    )
+}
+
 fn window_controls(cx: &App) -> impl IntoElement {
     h_flex()
         .id("window-controls")
@@ -85,12 +140,17 @@ fn window_controls(cx: &App) -> impl IntoElement {
 }
 
 pub fn render_title_bar(
-    _this: &MemoryCleanerApp,
+    app: &MemoryCleanerApp,
     window: &mut Window,
     cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
     let state = window.use_state(cx, |_, _| TitleBarDragState { should_move: false });
-    let theme = cx.theme();
+    let title_bar_border = cx.theme().title_bar_border;
+    let title_bar_bg = cx.theme().title_bar;
+    let foreground = cx.theme().foreground;
+    let hover_fg = cx.theme().secondary_foreground;
+    let hover_bg = cx.theme().secondary_hover;
+    let active_bg = cx.theme().secondary_active;
     let show_custom_controls = !(cfg!(target_os = "macos") || cfg!(target_family = "wasm"));
 
     div()
@@ -105,8 +165,8 @@ pub fn render_title_bar(
                 .h(TITLE_BAR_HEIGHT)
                 .pl(TITLE_BAR_LEFT_PADDING)
                 .border_b_1()
-                .border_color(theme.title_bar_border)
-                .bg(theme.title_bar)
+                .border_color(title_bar_border)
+                .bg(title_bar_bg)
                 .on_mouse_down_out(window.listener_for(&state, |state, _, _, _| {
                     state.should_move = false;
                 }))
@@ -146,10 +206,26 @@ pub fn render_title_bar(
                                     Label::new(APP_NAME)
                                         .text_sm()
                                         .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(theme.foreground),
+                                        .text_color(foreground),
                                 ),
                         ),
                 )
-                .when(show_custom_controls, |this| this.child(window_controls(cx))),
+                .when(show_custom_controls, |this| {
+                    this.child(
+                        h_flex()
+                            .items_center()
+                            .flex_shrink_0()
+                            .h_full()
+                            .child(settings_toggle_control(
+                                app,
+                                foreground,
+                                hover_fg,
+                                hover_bg,
+                                active_bg,
+                                cx,
+                            ))
+                            .child(window_controls(cx)),
+                    )
+                }),
         )
 }
