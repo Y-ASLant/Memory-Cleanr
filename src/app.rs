@@ -99,6 +99,7 @@ pub struct MemoryCleanerApp {
     pub optimize_step: String,
     pub optimize_percent: f32,
     pub optimize_status: String,
+    pub icon_cache_status: String,
     pub settings_expanded: bool,
 }
 
@@ -161,6 +162,7 @@ impl MemoryCleanerApp {
             optimize_step: String::new(),
             optimize_percent: 0.0,
             optimize_status: String::new(),
+            icon_cache_status: String::new(),
             settings_expanded: false,
         };
 
@@ -557,22 +559,63 @@ impl MemoryCleanerApp {
         .detach();
     }
 
-    pub fn refresh_desktop_icon_cache(&mut self, cx: &mut Context<Self>) {
+    pub fn open_icon_cache_confirm_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_refreshing_icon_cache || self.is_optimizing {
+            return;
+        }
+
+        use gpui_component::WindowExt;
+        use gpui_component::dialog::DialogButtonProps;
+
+        let weak = cx.weak_entity();
+        window.open_alert_dialog(cx, move |alert, _window, _cx| {
+            alert
+                .title("刷新桌面图标缓存")
+                .description("将短暂结束并重启资源管理器，桌面与任务栏会闪断。是否继续？")
+                .overlay_closable(false)
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_text("确认")
+                        .cancel_text("取消")
+                        .show_cancel(true),
+                )
+                .on_ok({
+                    let weak = weak.clone();
+                    move |_, _window, cx| {
+                        let _ = weak.update(cx, |app, cx| app.run_icon_cache_refresh(cx));
+                        true
+                    }
+                })
+        });
+    }
+
+    pub fn run_icon_cache_refresh(&mut self, cx: &mut Context<Self>) {
         if self.is_refreshing_icon_cache || self.is_optimizing {
             return;
         }
 
         self.is_refreshing_icon_cache = true;
+        self.icon_cache_status = "正在刷新桌面图标缓存…".into();
         cx.notify();
 
         cx.spawn(async move |this, cx| {
-            let result = smol::unblock(crate::icon_cache::refresh).await;
-            if let Err(e) = result {
-                crate::log::write(&format!("[icon_cache] 失败: {e:#}"));
+            let outcome = smol::unblock(crate::icon_cache::refresh).await;
+            let message = outcome.user_message();
+            crate::log_msg(&format!("[icon_cache] {message}"));
+            for failure in &outcome.failures {
+                crate::log::write(&format!("[icon_cache] {failure}"));
             }
 
             let _ = this.update(cx, |app, cx| {
                 app.is_refreshing_icon_cache = false;
+                app.icon_cache_status = message;
+                cx.notify();
+            });
+
+            Timer::after(OPTIMIZE_RESULT_DISPLAY).await;
+
+            let _ = this.update(cx, |app, cx| {
+                app.icon_cache_status.clear();
                 cx.notify();
             });
         })

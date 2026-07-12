@@ -1,9 +1,7 @@
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use anyhow::{Context, Result};
 use windows::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM,
     FILE_FLAGS_AND_ATTRIBUTES, GetFileAttributesW, INVALID_FILE_ATTRIBUTES, SetFileAttributesW,
@@ -11,115 +9,130 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::Registry::{
     HKEY, HKEY_CLASSES_ROOT, KEY_SET_VALUE, RegCloseKey, RegDeleteValueW, RegOpenKeyExW,
 };
+use windows::Win32::UI::Shell::{SHCNE_ASSOCCHANGED, SHCNF_IDLIST, SHChangeNotify};
 use windows::core::PCWSTR;
 
-const EXPLORER_WAIT: Duration = Duration::from_millis(800);
-
-const THUMBCACHE_FILES: &[&str] = &[
-    "thumbcache_32.db",
-    "thumbcache_96.db",
-    "thumbcache_102.db",
-    "thumbcache_256.db",
-    "thumbcache_1024.db",
-    "thumbcache_idx.db",
-    "thumbcache_sr.db",
-];
-
-const TRAY_NOTIFY_SUBKEY: &str =
+const TRAY_SUBKEY: &str =
     "Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\TrayNotify";
 
-const TRAY_NOTIFY_VALUES: &[&str] = &["IconStreams", "PastIconsStream"];
-
-/// Refresh the desktop icon cache by restarting Explorer and clearing cached files.
-pub fn refresh() -> Result<()> {
-    crate::log::write("[icon_cache] 开始刷新桌面图标缓存");
-
-    crate::win32::process::kill_process_by_name("explorer.exe")?;
-    std::thread::sleep(EXPLORER_WAIT);
-
-    let local_app_data = local_app_data_dir()?;
-
-    let icon_cache = local_app_data.join("IconCache.db");
-    clear_attributes(&icon_cache)?;
-    delete_file_best_effort(&icon_cache);
-
-    let explorer_dir = local_app_data
-        .join("Microsoft")
-        .join("Windows")
-        .join("Explorer");
-    clear_dir_attributes(&explorer_dir)?;
-
-    for name in THUMBCACHE_FILES {
-        let path = explorer_dir.join(name);
-        clear_attributes(&path)?;
-        delete_file_best_effort(&path);
-    }
-
-    for value in TRAY_NOTIFY_VALUES {
-        delete_registry_value(TRAY_NOTIFY_SUBKEY, value);
-    }
-
-    restart_explorer()?;
-    crate::log::write("[icon_cache] 桌面图标缓存刷新完成");
-    Ok(())
+pub struct RefreshOutcome {
+    pub explorer_restarted: bool,
+    pub failures: Vec<String>,
 }
 
-fn local_app_data_dir() -> Result<PathBuf> {
-    std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .context("LOCALAPPDATA is not set")
-}
-
-fn to_wide(value: &str) -> Vec<u16> {
-    OsStr::new(value).encode_wide().chain(Some(0)).collect()
-}
-
-fn clear_attributes(path: &Path) -> Result<()> {
-    if !path.exists() {
-        return Ok(());
+impl RefreshOutcome {
+    pub fn user_message(&self) -> String {
+        if !self.explorer_restarted {
+            "刷新失败：无法重启资源管理器".into()
+        } else if self.failures.is_empty() {
+            "桌面图标缓存已刷新".into()
+        } else {
+            "已刷新，部分缓存未能清理".into()
+        }
     }
+}
 
+pub fn refresh() -> RefreshOutcome {
+    let mut failures = Vec::new();
+    let Some(()) = stop_explorer(&mut failures) else {
+        return RefreshOutcome {
+            explorer_restarted: false,
+            failures,
+        };
+    };
+
+    clean_files(&mut failures);
+    let explorer_restarted = restart_explorer(&mut failures);
+    RefreshOutcome {
+        explorer_restarted,
+        failures,
+    }
+}
+
+fn stop_explorer(failures: &mut Vec<String>) -> Option<()> {
+    match crate::win32::process::kill_process_by_name("explorer.exe") {
+        Err(e) => {
+            failures.push(format!("结束 explorer 失败: {e:#}"));
+            None
+        }
+        Ok(0) => Some(()),
+        Ok(_) => {
+            if !crate::win32::process::wait_for_process_exit("explorer.exe", 5000) {
+                failures.push("explorer 退出超时".into());
+            }
+            Some(())
+        }
+    }
+}
+
+fn clean_files(failures: &mut Vec<String>) {
+    let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) else {
+        failures.push("LOCALAPPDATA 未设置".into());
+        return;
+    };
+
+    delete_file(&local.join("IconCache.db"), failures);
+    let explorer = local.join("Microsoft").join("Windows").join("Explorer");
+    for prefix in ["iconcache_", "thumbcache_"] {
+        delete_db_prefix(&explorer, prefix, failures);
+    }
+    for value in ["IconStreams", "PastIconsStream"] {
+        delete_reg_value(TRAY_SUBKEY, value, failures);
+    }
+}
+
+fn restart_explorer(failures: &mut Vec<String>) -> bool {
+    match std::process::Command::new("explorer.exe").spawn() {
+        Ok(_) => {
+            notify_shell();
+            true
+        }
+        Err(e) => {
+            failures.push(format!("重启 explorer 失败: {e}"));
+            false
+        }
+    }
+}
+
+fn delete_db_prefix(dir: &Path, prefix: &str, failures: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(prefix) && name.ends_with(".db") {
+            delete_file(&entry.path(), failures);
+        }
+    }
+}
+
+fn delete_file(path: &Path, failures: &mut Vec<String>) {
+    if !path.is_file() {
+        return;
+    }
+    clear_attrs(path);
+    if std::fs::remove_file(path).is_err() {
+        failures.push(format!("删除失败: {}", path.display()));
+    }
+}
+
+fn clear_attrs(path: &Path) {
     let wide = to_wide(&path.to_string_lossy());
     unsafe {
         let attrs = GetFileAttributesW(PCWSTR(wide.as_ptr()));
         if attrs == INVALID_FILE_ATTRIBUTES {
-            return Ok(());
+            return;
         }
         let mask = FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0 | FILE_ATTRIBUTE_READONLY.0;
-        let new_attrs = attrs & !mask;
-        let _ = SetFileAttributesW(PCWSTR(wide.as_ptr()), FILE_FLAGS_AND_ATTRIBUTES(new_attrs));
-    }
-    Ok(())
-}
-
-fn clear_dir_attributes(dir: &Path) -> Result<()> {
-    if !dir.is_dir() {
-        return Ok(());
-    }
-
-    for entry in std::fs::read_dir(dir)
-        .with_context(|| format!("read_dir {}", dir.display()))?
-        .flatten()
-    {
-        let path = entry.path();
-        clear_attributes(&path)?;
-        if path.is_dir() {
-            clear_dir_attributes(&path)?;
-        }
-    }
-    Ok(())
-}
-
-fn delete_file_best_effort(path: &Path) {
-    if !path.is_file() {
-        return;
-    }
-    if let Err(e) = std::fs::remove_file(path) {
-        crate::log::write(&format!("[icon_cache] 删除 {} 失败: {e}", path.display()));
+        let _ = SetFileAttributesW(
+            PCWSTR(wide.as_ptr()),
+            FILE_FLAGS_AND_ATTRIBUTES(attrs & !mask),
+        );
     }
 }
 
-fn delete_registry_value(subkey: &str, value: &str) {
+fn delete_reg_value(subkey: &str, value: &str, failures: &mut Vec<String>) {
     unsafe {
         let subkey_wide = to_wide(subkey);
         let mut key = HKEY::default();
@@ -134,22 +147,20 @@ fn delete_registry_value(subkey: &str, value: &str) {
         {
             return;
         }
-
         let value_wide = to_wide(value);
-        let err = RegDeleteValueW(key, PCWSTR(value_wide.as_ptr()));
-        if err.is_err() {
-            crate::log::write(&format!(
-                "[icon_cache] 删除注册表值 {value} 失败: {:?}",
-                err
-            ));
+        if RegDeleteValueW(key, PCWSTR(value_wide.as_ptr())).is_err() {
+            failures.push(format!("删除注册表值 {value} 失败"));
         }
         let _ = RegCloseKey(key);
     }
 }
 
-fn restart_explorer() -> Result<()> {
-    std::process::Command::new("explorer.exe")
-        .spawn()
-        .context("failed to restart explorer.exe")?;
-    Ok(())
+fn notify_shell() {
+    unsafe {
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
+    }
+}
+
+fn to_wide(value: &str) -> Vec<u16> {
+    OsStr::new(value).encode_wide().chain(Some(0)).collect()
 }
