@@ -548,8 +548,7 @@ impl MemoryCleanerApp {
                 cx.notify();
             });
 
-            let drive_result =
-                smol::unblock(move || optimize::optimize_drive_cache(drive)).await;
+            let drive_result = smol::unblock(move || optimize::optimize_drive_cache(drive)).await;
             if let Err(e) = drive_result {
                 crate::log::write(&format!(
                     "[optimize] 已修改文件 驱动器 {drive}: 失败: {e:#}"
@@ -620,10 +619,7 @@ impl MemoryCleanerApp {
                 app.optimize_percent = 0.0;
                 app.optimize_status =
                     Self::build_result_message(&completed, &errors, &freed_detail);
-                crate::log::write(&format!(
-                    "[optimize] 结果: {}",
-                    app.optimize_status
-                ));
+                crate::log::write(&format!("[optimize] 结果: {}", app.optimize_status));
                 cx.notify();
             });
 

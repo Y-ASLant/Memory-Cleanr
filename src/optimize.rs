@@ -1,11 +1,10 @@
 use anyhow::{Context, Result, bail};
 use windows::Win32::Foundation::CloseHandle;
-use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
+use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, GetLastError};
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_NO_BUFFERING, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, FlushFileBuffers,
     OPEN_EXISTING,
 };
-use windows::Win32::System::IO::DeviceIoControl;
 use windows::Win32::System::Memory::SetSystemFileCacheSize;
 
 use crate::privileges::enable_privilege;
@@ -200,9 +199,6 @@ pub fn fixed_drives() -> Vec<char> {
 }
 
 pub fn optimize_drive_cache(drive_letter: char) -> Result<()> {
-    const IOCTL_RESET_WRITE_ORDER: u32 = 0x000900F8;
-    const FSCTL_DISCARD_VOLUME_CACHE: u32 = 0x00090054;
-
     let path = format!("\\\\.\\{}:", drive_letter);
     let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
 
@@ -213,54 +209,24 @@ pub fn optimize_drive_cache(drive_letter: char) -> Result<()> {
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             None,
             OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_NO_BUFFERING,
+            FILE_ATTRIBUTE_NORMAL,
             None,
         )
     };
 
-    let h = handle.context(format!("open drive {drive_letter}:"))?;
+    let h = handle.context(format!("open volume {drive_letter}:"))?;
     if h.is_invalid() {
-        bail!("invalid handle for drive {drive_letter}:");
+        bail!("invalid handle for volume {drive_letter}:");
     }
 
-    let mut bytes_returned = 0u32;
-    let mut drive_failed = false;
-
+    let flush_ok = unsafe { FlushFileBuffers(h).is_ok() };
+    let last_error = unsafe { GetLastError() };
     unsafe {
-        if !DeviceIoControl(
-            h,
-            IOCTL_RESET_WRITE_ORDER,
-            Some(&[0u8] as *const _ as *const _),
-            1,
-            None,
-            0,
-            Some(&mut bytes_returned),
-            None,
-        )
-        .is_ok()
-        {
-            drive_failed = true;
-        }
-        if !DeviceIoControl(
-            h,
-            FSCTL_DISCARD_VOLUME_CACHE,
-            None,
-            0,
-            None,
-            0,
-            Some(&mut bytes_returned),
-            None,
-        )
-        .is_ok()
-        {
-            drive_failed = true;
-        }
-        let _ = windows::Win32::Storage::FileSystem::FlushFileBuffers(h);
         let _ = CloseHandle(h);
     }
 
-    if drive_failed {
-        bail!("drive {drive_letter}: cache flush failed");
+    if !flush_ok {
+        bail!("FlushFileBuffers on volume {drive_letter}: failed ({last_error:?})");
     }
 
     Ok(())
