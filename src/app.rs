@@ -17,10 +17,8 @@ const MEMORY_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const SETTINGS_SAVE_DEBOUNCE: Duration = Duration::from_millis(300);
 const OPTIMIZE_RESULT_DISPLAY: Duration = Duration::from_secs(5);
 
-const WINDOW_WIDTH: f32 = 560.;
-const WINDOW_HEIGHT_COLLAPSED: f32 = 300.;
-const WINDOW_MIN_WIDTH: f32 = 560.;
-const WINDOW_MIN_HEIGHT: f32 = 300.;
+const WINDOW_WIDTH: f32 = 520.;
+const WINDOW_MIN_WIDTH: f32 = 520.;
 pub const CONTENT_PADDING: f32 = 6.;
 const SINGLE_CARD_MAX_WIDTH: f32 = 360.;
 
@@ -28,13 +26,16 @@ pub fn window_size(expanded: bool) -> Size<Pixels> {
     let height = if expanded {
         crate::ui::layout::expanded_window_height(CONTENT_PADDING)
     } else {
-        WINDOW_HEIGHT_COLLAPSED
+        crate::ui::layout::collapsed_window_height(CONTENT_PADDING)
     };
     size(px(WINDOW_WIDTH), px(height))
 }
 
 pub fn window_min_size() -> Size<Pixels> {
-    size(px(WINDOW_MIN_WIDTH), px(WINDOW_MIN_HEIGHT))
+    size(
+        px(WINDOW_MIN_WIDTH),
+        px(crate::ui::layout::collapsed_window_height(CONTENT_PADDING)),
+    )
 }
 
 fn build_section(
@@ -631,35 +632,30 @@ impl Render for MemoryCleanerApp {
                     .bg(bg)
                     .child(render_title_bar(self, window, cx))
                     .child({
-                        let mut main_column = v_flex().w_full().min_h_0().overflow_hidden();
+                        let mut body = v_flex()
+                            .w_full()
+                            .flex_shrink_0()
+                            .px(px(CONTENT_PADDING))
+                            .pt(px(CONTENT_PADDING))
+                            .child(memory_row);
                         if self.settings_expanded {
-                            main_column = main_column.flex_shrink_0();
-                        } else {
-                            main_column = main_column.flex_1();
+                            body = body
+                                .gap(px(SECTION_GAP))
+                                .child(render_settings_content(self, cx));
                         }
-                        main_column
-                            .child({
-                                let mut body = v_flex()
-                                    .w_full()
-                                    .px(px(CONTENT_PADDING))
-                                    .pt(px(CONTENT_PADDING))
-                                    .gap(px(SECTION_GAP))
-                                    .child(memory_row)
-                                    .child(render_settings_content(self, cx));
-                                if self.settings_expanded {
-                                    body = body.flex_shrink_0();
-                                } else {
-                                    body = body.flex_1().min_h_0();
-                                }
-                                body
-                            })
+                        v_flex()
+                            .w_full()
+                            .flex_shrink_0()
+                            .min_h_0()
+                            .overflow_hidden()
+                            .gap(px(SECTION_GAP))
+                            .child(body)
                             .child(
                                 div()
                                     .w_full()
                                     .flex_shrink_0()
                                     .px(px(CONTENT_PADDING))
                                     .pb(px(CONTENT_PADDING))
-                                    .pt(px(SECTION_GAP))
                                     .child(render_cleanup_footer(self, cx)),
                             )
                     }),

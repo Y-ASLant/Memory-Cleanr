@@ -7,23 +7,29 @@ pub const TITLE_BAR_H: f32 = 34.;
 pub const CLEANUP_BUTTON_H: f32 = 48.;
 
 const CARD_BORDER: f32 = 2.;
+/// GroupBox outline 内层固定 `p_4()`（上下各 16px）。
+const GROUP_BOX_OUTLINE_PADDING_V: f32 = 32.;
 const PANEL_BORDER: f32 = 2.;
 const MEMORY_HEADER_H: f32 = 20.;
 const MEMORY_LINE_GAP: f32 = 4.;
 const MEMORY_SUMMARY_H: f32 = 16.;
 const SECTION_TITLE_H: f32 = 20.;
-const HINT_H: f32 = 25.;
-const CHECKBOX_ROW_H: f32 = 25.;
+/// 清理区行高估算（仅用于 `expanded_window_height`，不影响实际布局）。
+const HINT_H: f32 = 24.;
+const CHECKBOX_ROW_H: f32 = 22.;
 const CLEANUP_ROWS: f32 = 4.;
-const CLEANUP_ROW_GAPS: f32 = SECTION_GAP * 3.;
-/// Checkbox/hint rows render slightly taller than the sizing constants above;
-/// keep expanded window from clipping the footer's 6px bottom padding.
-const EXPANDED_FOOTER_PADDING_GUARD: f32 = 2.;
+/// 提示条 + 4 行 checkbox 共 5 项，`v_flex().gap(6)` 产生 4 个间距。
+const CLEANUP_ROW_GAPS: f32 = SECTION_GAP * CLEANUP_ROWS;
+/// 折叠窗口高度略偏低时会裁切 footer 底边距，补回至 6px。
+const COLLAPSED_FOOTER_PADDING_GUARD: f32 = 4.;
+/// 展开窗口高度估算偏高时的负向微调（仅影响 `window.resize`）。
+const EXPANDED_WINDOW_HEIGHT_ADJUSTMENT: f32 = -22.;
 
 pub fn memory_section_height() -> f32 {
     use crate::ui::memory_card::{MEMORY_CARD_PY, MEMORY_RING_SIZE};
 
     CARD_BORDER
+        + GROUP_BOX_OUTLINE_PADDING_V
         + MEMORY_CARD_PY * 2.
         + MEMORY_HEADER_H
         + MEMORY_LINE_GAP
@@ -38,6 +44,16 @@ pub fn cleanup_section_height(content_padding: f32) -> f32 {
     PANEL_BORDER + content_padding * 2. + SECTION_TITLE_H + SECTION_GAP + cleanup_areas
 }
 
+pub fn collapsed_window_height(content_padding: f32) -> f32 {
+    TITLE_BAR_H
+        + content_padding
+        + memory_section_height()
+        + SECTION_GAP
+        + CLEANUP_BUTTON_H
+        + content_padding
+        + COLLAPSED_FOOTER_PADDING_GUARD
+}
+
 pub fn expanded_window_height(content_padding: f32) -> f32 {
     TITLE_BAR_H
         + content_padding
@@ -47,5 +63,5 @@ pub fn expanded_window_height(content_padding: f32) -> f32 {
         + SECTION_GAP
         + CLEANUP_BUTTON_H
         + content_padding
-        + EXPANDED_FOOTER_PADDING_GUARD
+        + EXPANDED_WINDOW_HEIGHT_ADJUSTMENT
 }

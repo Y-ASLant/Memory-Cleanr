@@ -409,19 +409,8 @@ pub fn render_settings_content(
     app: &MemoryCleanerApp,
     cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
-    if app.settings_expanded {
-        let theme = cx.theme();
-        return render_settings_details(
-            app,
-            theme.border,
-            theme.radius,
-            theme.muted_foreground,
-            cx,
-        )
-        .into_any_element();
-    }
-
-    div().flex_1().min_h_0().into_any_element()
+    let theme = cx.theme();
+    render_settings_details(app, theme.border, theme.radius, theme.muted_foreground, cx)
 }
 
 fn render_settings_details(

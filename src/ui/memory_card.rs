@@ -6,7 +6,7 @@ use gpui_component::{
 
 use crate::memory::MemorySection;
 
-pub const MEMORY_RING_SIZE: f32 = 110.;
+pub const MEMORY_RING_SIZE: f32 = 108.;
 
 /// ProgressCircle applies a 0.75 scale to custom sizes internally.
 const PROGRESS_CIRCLE_LAYOUT_SIZE: Pixels = px(MEMORY_RING_SIZE / 0.75);
