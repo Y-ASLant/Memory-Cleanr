@@ -124,11 +124,15 @@ fn main() {
         std::process::exit(0);
     }
 
-    let _tray = match Tray::install() {
-        Ok(tray) => Some(tray),
+    let tray_rx = match Tray::install() {
+        Ok((tray, rx)) => {
+            let _ = Box::leak(Box::new(tray));
+            rx
+        }
         Err(e) => {
             log_msg(&format!("Failed to install tray icon: {e}"));
-            None
+            let (_tx, rx) = std::sync::mpsc::channel();
+            rx
         }
     };
 
@@ -153,7 +157,7 @@ fn main() {
 
                 let settings = Settings::load();
                 let app_entity = cx.new(|cx| {
-                    let view = MemoryCleanerApp::new(window, cx, settings);
+                    let view = MemoryCleanerApp::new(window, cx, settings, tray_rx);
                     window.activate_window();
                     view
                 });

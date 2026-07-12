@@ -9,12 +9,12 @@ use smol::Timer;
 use crate::memory::{MemorySection, MemoryStatus};
 use crate::optimize::{self, MemoryAreas};
 use crate::settings::Settings;
-use crate::tray::{poll_menu_events, poll_tray_click};
+use crate::tray::{TrayCommand, dispatch_command};
 use crate::ui::layout::SECTION_GAP;
 use crate::ui::memory_card::{RING_ANIM_DURATION_MS, RingAnim};
 use crate::win32;
 
-pub const TRAY_POLL: Duration = Duration::from_millis(1000);
+const MEMORY_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const SETTINGS_SAVE_DEBOUNCE: Duration = Duration::from_millis(300);
 const OPTIMIZE_RESULT_DISPLAY: Duration = Duration::from_secs(5);
 
@@ -106,7 +106,12 @@ pub struct MemoryCleanerApp {
 }
 
 impl MemoryCleanerApp {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>, settings: Settings) -> Self {
+    pub fn new(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        settings: Settings,
+        tray_rx: std::sync::mpsc::Receiver<TrayCommand>,
+    ) -> Self {
         crate::log::set_debug_enabled(settings.debug_logging);
         if settings.debug_logging {
             crate::log::write(&format!(
@@ -171,7 +176,7 @@ impl MemoryCleanerApp {
             settings_expanded: false,
         };
 
-        app.start_background_poll(cx);
+        app.start_background_tasks(cx, tray_rx);
 
         app
     }
@@ -403,39 +408,29 @@ impl MemoryCleanerApp {
         }
     }
 
-    pub fn poll_tray(&mut self, cx: &mut Context<Self>) -> bool {
-        let mut changed = false;
-
-        if poll_tray_click() {
-            self.activate_window(cx);
-            changed = true;
-        }
-
-        while let Some(action) = poll_menu_events() {
-            self.handle_tray_action(&action, cx);
-            changed = true;
-        }
-
-        changed
-    }
-
-    pub fn start_background_poll(&self, cx: &mut Context<Self>) {
-        const MEMORY_POLL_TICKS: u32 = 5; // 5 × TRAY_POLL ≈ 5 s memory refresh
-
+    pub fn start_background_tasks(
+        &self,
+        cx: &mut Context<Self>,
+        mut tray_rx: std::sync::mpsc::Receiver<TrayCommand>,
+    ) {
         cx.spawn(async move |this, cx| {
-            let mut ticks = 0u32;
             loop {
-                Timer::after(TRAY_POLL).await;
-                ticks += 1;
+                let (command, rx) = smol::unblock(move || {
+                    let result = tray_rx.recv_timeout(MEMORY_POLL_INTERVAL);
+                    (result.ok(), tray_rx)
+                })
+                .await;
+                tray_rx = rx;
 
                 if this
                     .update(cx, |this, cx| {
-                        let mut changed = this.poll_tray(cx);
-                        if ticks >= MEMORY_POLL_TICKS {
-                            ticks = 0;
-                            if this.refresh_memory(cx) {
-                                changed = true;
-                            }
+                        let mut changed = false;
+                        if let Some(command) = command {
+                            dispatch_command(this, command, cx);
+                            changed = true;
+                        }
+                        if this.refresh_memory(cx) {
+                            changed = true;
                         }
                         if changed {
                             cx.notify();

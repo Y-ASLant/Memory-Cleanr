@@ -1,12 +1,24 @@
+use std::sync::mpsc::{Receiver, Sender};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+
+use crate::app::MemoryCleanerApp;
 
 pub struct Tray {
     _icon: TrayIcon,
 }
 
+#[derive(Debug, Clone)]
+pub enum TrayCommand {
+    ActivateWindow,
+    MenuAction(String),
+}
+
 impl Tray {
-    pub fn install() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn install() -> Result<(Self, Receiver<TrayCommand>), Box<dyn std::error::Error>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        install_event_handlers(tx);
+
         let menu = Menu::new();
         menu.append(&MenuItem::with_id("optimize", "优化内存", true, None))?;
         menu.append(&MenuItem::with_id("show", "显示窗口", true, None))?;
@@ -22,8 +34,31 @@ impl Tray {
             .with_icon(icon)
             .build()?;
 
-        Ok(Self { _icon: tray_icon })
+        Ok((Self { _icon: tray_icon }, rx))
     }
+}
+
+fn install_event_handlers(tx: Sender<TrayCommand>) {
+    TrayIconEvent::set_event_handler(Some({
+        let tx = tx.clone();
+        move |event| {
+            let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            else {
+                return;
+            };
+            let _ = tx.send(TrayCommand::ActivateWindow);
+        }
+    }));
+
+    MenuEvent::set_event_handler(Some({
+        move |event: MenuEvent| {
+            let _ = tx.send(TrayCommand::MenuAction(event.id().0.clone()));
+        }
+    }));
 }
 
 /// Load the application icon from the embedded PNG, resize to 32×32 for
@@ -68,29 +103,13 @@ fn create_fallback_icon() -> Icon {
     })
 }
 
-pub fn poll_menu_events() -> Option<String> {
-    MenuEvent::receiver()
-        .try_recv()
-        .ok()
-        .map(|event| event.id().0.clone())
-}
-
-pub fn poll_tray_click() -> bool {
-    use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
-
-    let receiver = TrayIconEvent::receiver();
-    let mut clicked = false;
-    while let Ok(event) = receiver.try_recv() {
-        if matches!(
-            event,
-            TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            }
-        ) {
-            clicked = true;
-        }
+pub fn dispatch_command(
+    app: &mut MemoryCleanerApp,
+    command: TrayCommand,
+    cx: &mut gpui::Context<MemoryCleanerApp>,
+) {
+    match command {
+        TrayCommand::ActivateWindow => app.activate_window(cx),
+        TrayCommand::MenuAction(action) => app.handle_tray_action(&action, cx),
     }
-    clicked
 }
