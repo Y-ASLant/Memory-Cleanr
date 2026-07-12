@@ -43,6 +43,14 @@ impl MemorySection {
     pub fn is_unavailable(&self) -> bool {
         self.total == 0
     }
+
+    pub fn percent_label(&self) -> String {
+        if self.is_unavailable() {
+            "—".into()
+        } else {
+            format!("{}%", self.used_percent.round() as u32)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

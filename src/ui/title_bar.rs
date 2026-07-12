@@ -118,28 +118,29 @@ fn expand_toggle_control(
     )
 }
 
+fn icon_cache_tooltip(app: &MemoryCleanerApp) -> SharedString {
+    if app.is_refreshing_icon_cache {
+        "正在刷新桌面图标缓存…".into()
+    } else if app.icon_cache_status.is_empty() {
+        "刷新桌面图标缓存".into()
+    } else {
+        app.icon_cache_status.clone().into()
+    }
+}
+
 fn icon_cache_control(
     app: &MemoryCleanerApp,
     colors: TitleBarActionColors,
     app_cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
-    let disabled = app.is_refreshing_icon_cache || app.is_optimizing;
-    let tooltip = if app.is_refreshing_icon_cache {
-        "正在刷新桌面图标缓存…".into()
-    } else if app.icon_cache_status.is_empty() {
-        "刷新桌面图标缓存".into()
-    } else {
-        app.icon_cache_status.clone()
-    };
-
     Button::new("titlebar-refresh-icon-cache")
         .ghost()
         .rounded(ButtonRounded::None)
         .w(TITLE_BAR_HEIGHT)
         .h(TITLE_BAR_HEIGHT)
         .flex_shrink_0()
-        .disabled(disabled)
-        .tooltip(tooltip)
+        .disabled(app.is_busy())
+        .tooltip(icon_cache_tooltip(app))
         .on_click(app_cx.listener(|app, _, window, cx| {
             app.open_icon_cache_confirm_dialog(window, cx);
         }))

@@ -81,20 +81,9 @@ pub fn sync_display(
 }
 
 fn memory_tooltip(physical: &MemorySection, virtual_mem: Option<&MemorySection>) -> String {
-    let physical_pct = if physical.is_unavailable() {
-        "—".into()
-    } else {
-        format!("{}%", physical.used_percent.round() as u32)
-    };
-
-    let mut lines = vec![format!("物理内存: {physical_pct}")];
+    let mut lines = vec![format!("物理内存: {}", physical.percent_label())];
     if let Some(virtual_mem) = virtual_mem {
-        let virtual_pct = if virtual_mem.is_unavailable() {
-            "—".into()
-        } else {
-            format!("{}%", virtual_mem.used_percent.round() as u32)
-        };
-        lines.push(format!("虚拟内存: {virtual_pct}"));
+        lines.push(format!("虚拟内存: {}", virtual_mem.percent_label()));
     }
     lines.join("\n")
 }

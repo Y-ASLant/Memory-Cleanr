@@ -79,7 +79,13 @@ impl Settings {
     }
 
     fn normalize_memory_areas(&mut self) {
-        self.memory_areas = self.memory_areas().bits();
+        let mut areas = MemoryAreas::from_bits_truncate(self.memory_areas);
+        if areas.contains(MemoryAreas::STANDBY_LIST)
+            && areas.contains(MemoryAreas::STANDBY_LIST_LOW_PRIORITY)
+        {
+            areas.remove(MemoryAreas::STANDBY_LIST_LOW_PRIORITY);
+            self.memory_areas = areas.bits();
+        }
     }
 
     pub fn save(&self) {

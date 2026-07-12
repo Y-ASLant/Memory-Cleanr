@@ -157,17 +157,20 @@ impl MemoryCleanerApp {
         app
     }
 
+    fn window_visible(&self, cx: &mut Context<Self>) -> bool {
+        self.window
+            .update(cx, |_, window, _| win32::window::is_visible(window))
+            .flatten()
+            .unwrap_or(true)
+    }
+
     fn sync_tray(&self, cx: &mut Context<Self>) {
-        let physical = self.physical.clone();
-        let virtual_mem = self
-            .settings
-            .show_virtual_memory
-            .then(|| self.virtual_mem.clone())
-            .flatten();
-        let _ = self.window.update(cx, |_, window, _| {
-            let visible = win32::window::is_visible(window).unwrap_or(true);
-            crate::tray::sync_display(&physical, virtual_mem.as_ref(), visible);
-        });
+        let virtual_mem = if self.settings.show_virtual_memory {
+            self.virtual_mem.as_ref()
+        } else {
+            None
+        };
+        crate::tray::sync_display(&self.physical, virtual_mem, self.window_visible(cx));
     }
 
     fn queue_settings_save(&mut self, cx: &mut Context<Self>) {
@@ -331,12 +334,7 @@ impl MemoryCleanerApp {
         match action {
             "optimize" => self.run_optimize(cx),
             "toggle_window" => {
-                let visible = self
-                    .window
-                    .update(cx, |_, window, _| win32::window::is_visible(window))
-                    .flatten()
-                    .unwrap_or(true);
-                if visible {
+                if self.window_visible(cx) {
                     self.hide_to_tray(cx);
                 } else {
                     self.activate_window(cx);
@@ -572,7 +570,7 @@ impl MemoryCleanerApp {
     }
 
     pub fn open_icon_cache_confirm_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.is_refreshing_icon_cache || self.is_optimizing {
+        if self.is_busy() {
             return;
         }
 
@@ -602,7 +600,7 @@ impl MemoryCleanerApp {
     }
 
     pub fn run_icon_cache_refresh(&mut self, cx: &mut Context<Self>) {
-        if self.is_refreshing_icon_cache || self.is_optimizing {
+        if self.is_busy() {
             return;
         }
 
@@ -632,6 +630,10 @@ impl MemoryCleanerApp {
             });
         })
         .detach();
+    }
+
+    pub(crate) fn is_busy(&self) -> bool {
+        self.is_refreshing_icon_cache || self.is_optimizing
     }
 }
 
