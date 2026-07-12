@@ -1,4 +1,3 @@
-use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Icon, IconName, Sizable, TITLE_BAR_HEIGHT, h_flex, label::Label,
@@ -56,19 +55,7 @@ fn title_bar_control(
         .text_color(cx.theme().foreground)
         .hover(|style| style.bg(hover_bg).text_color(hover_fg))
         .active(|style| style.bg(active_bg).text_color(hover_fg))
-        .when(cfg!(target_os = "windows"), |this| {
-            this.window_control_area(area)
-        })
-        .when(cfg!(target_os = "linux"), |this| {
-            this.on_click(move |_, window, cx| {
-                cx.stop_propagation();
-                match area {
-                    WindowControlArea::Min => window.minimize_window(),
-                    WindowControlArea::Close => window.remove_window(),
-                    _ => {}
-                }
-            })
-        })
+        .window_control_area(area)
         .child(Icon::new(icon).small())
 }
 
@@ -171,7 +158,6 @@ pub fn render_title_bar(
         hover_bg,
         active_bg,
     };
-    let show_custom_controls = !(cfg!(target_os = "macos") || cfg!(target_family = "wasm"));
 
     div().flex_shrink_0().child(
         div()
@@ -228,16 +214,14 @@ pub fn render_title_bar(
                             ),
                     ),
             )
-            .when(show_custom_controls, |this| {
-                this.child(
-                    h_flex()
-                        .items_center()
-                        .flex_shrink_0()
-                        .h_full()
-                        .child(window_settings_control(action_colors, cx))
-                        .child(expand_toggle_control(app, action_colors, cx))
-                        .child(window_controls(cx)),
-                )
-            }),
+            .child(
+                h_flex()
+                    .items_center()
+                    .flex_shrink_0()
+                    .h_full()
+                    .child(window_settings_control(action_colors, cx))
+                    .child(expand_toggle_control(app, action_colors, cx))
+                    .child(window_controls(cx)),
+            ),
     )
 }

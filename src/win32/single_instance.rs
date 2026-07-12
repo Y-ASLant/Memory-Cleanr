@@ -1,5 +1,4 @@
 /// Ensure only one instance of the application is running.
-#[cfg(target_os = "windows")]
 pub fn ensure_single_instance() -> Result<(), Box<dyn std::error::Error>> {
     use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
     use windows::Win32::System::Threading::CreateMutexW;
@@ -16,10 +15,5 @@ pub fn ensure_single_instance() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    Ok(())
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn ensure_single_instance() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
