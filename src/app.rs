@@ -107,6 +107,14 @@ pub struct MemoryCleanerApp {
 
 impl MemoryCleanerApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>, settings: Settings) -> Self {
+        crate::log::set_debug_enabled(settings.debug_logging);
+        if settings.debug_logging {
+            crate::log::write(&format!(
+                "调试日志已启用，输出路径: {}",
+                crate::log::log_file_path().display()
+            ));
+        }
+
         let show_virtual = settings.show_virtual_memory;
         let (physical, virtual_mem) = query_sections(show_virtual).unwrap_or_else(|e| {
             crate::log_msg(&format!("[memory] initial query failed: {e}"));
@@ -369,8 +377,15 @@ impl MemoryCleanerApp {
         cx.notify();
     }
 
-    pub fn set_start_minimized(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        self.settings.start_minimized = enabled;
+    pub fn set_debug_logging(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.settings.debug_logging = enabled;
+        crate::log::set_debug_enabled(enabled);
+        if enabled {
+            crate::log::write(&format!(
+                "调试日志已启用，输出路径: {}",
+                crate::log::log_file_path().display()
+            ));
+        }
         self.queue_settings_save(cx);
         cx.notify();
     }
@@ -482,6 +497,10 @@ impl MemoryCleanerApp {
 
         let result = smol::unblock(run).await;
 
+        if let Err(e) = &result {
+            crate::log::write(&format!("[optimize] {name} 失败: {e:#}"));
+        }
+
         let _ = this.update(cx, |app, cx| {
             app.optimize_percent = (step_base + step_span) * 100.0;
             cx.notify();
@@ -529,10 +548,12 @@ impl MemoryCleanerApp {
                 cx.notify();
             });
 
-            if smol::unblock(move || optimize::optimize_drive_cache(drive))
-                .await
-                .is_err()
-            {
+            let drive_result =
+                smol::unblock(move || optimize::optimize_drive_cache(drive)).await;
+            if let Err(e) = drive_result {
+                crate::log::write(&format!(
+                    "[optimize] 已修改文件 驱动器 {drive}: 失败: {e:#}"
+                ));
                 failed.push(drive);
             }
 
@@ -584,8 +605,8 @@ impl MemoryCleanerApp {
 
                 if ok {
                     completed.push(name);
+                    crate::log::write(&format!("[optimize] {name} 成功"));
                 } else {
-                    crate::log_msg(&format!("[optimize] {name} failed"));
                     errors.push(name);
                 }
             }
@@ -599,6 +620,10 @@ impl MemoryCleanerApp {
                 app.optimize_percent = 0.0;
                 app.optimize_status =
                     Self::build_result_message(&completed, &errors, &freed_detail);
+                crate::log::write(&format!(
+                    "[optimize] 结果: {}",
+                    app.optimize_status
+                ));
                 cx.notify();
             });
 

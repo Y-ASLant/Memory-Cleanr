@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod log;
 mod memory;
 mod optimize;
 mod privileges;
@@ -38,6 +39,7 @@ pub fn log_msg(msg: &str) {
         OutputDebugStringA(bytes.as_ptr());
     }
     eprintln!("{msg}");
+    crate::log::write(msg);
 }
 
 /// If the current process is not running as administrator, re-launch
@@ -150,14 +152,9 @@ fn main() {
                 window.set_window_title(APP_NAME);
 
                 let settings = Settings::load();
-                let start_minimized = settings.start_minimized;
                 let app_entity = cx.new(|cx| {
                     let view = MemoryCleanerApp::new(window, cx, settings);
-                    if start_minimized {
-                        let _ = win32::window::hide_to_tray(window);
-                    } else {
-                        window.activate_window();
-                    }
+                    window.activate_window();
                     view
                 });
                 let weak = app_entity.downgrade();

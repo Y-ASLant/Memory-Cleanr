@@ -8,7 +8,6 @@ pub struct Settings {
     pub always_on_top: bool,
     pub close_to_notification_area: bool,
     pub show_virtual_memory: bool,
-    pub start_minimized: bool,
     pub memory_areas: u32,
     // 预留字段：自动优化功能（未实现）
     pub auto_optimization_interval: u32,
@@ -20,6 +19,8 @@ pub struct Settings {
     pub tray_icon_use_transparent_background: bool,
     pub tray_icon_warning_level: u8,
     pub tray_icon_danger_level: u8,
+    /// Write debug output to `App.log` next to the executable.
+    pub debug_logging: bool,
 }
 
 impl Default for Settings {
@@ -31,12 +32,12 @@ impl Default for Settings {
             close_to_notification_area: true,
             show_virtual_memory: true,
             show_optimization_notifications: true,
-            start_minimized: false,
             memory_areas: MemoryAreas::DEFAULT.bits(),
             tray_icon_show_memory_usage: false,
             tray_icon_use_transparent_background: false,
             tray_icon_warning_level: 80,
             tray_icon_danger_level: 90,
+            debug_logging: false,
         }
     }
 }

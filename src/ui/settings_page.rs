@@ -264,11 +264,11 @@ pub fn render_window_behavior_dialog(
         ))
         .child(switch_row_app(
             SwitchRowConfig {
-                id: "dialog-switch-start-minimized",
-                icon: IconName::Settings,
-                title: "启动时最小化",
-                description: "启动后直接进入托盘，不显示主窗口",
-                checked: settings.start_minimized,
+                id: "dialog-switch-debug-logging",
+                icon: IconName::Settings2,
+                title: "调试日志",
+                description: "将详细运行信息写入程序目录下的 App.log",
+                checked: settings.debug_logging,
             },
             muted,
             foreground,
@@ -276,7 +276,7 @@ pub fn render_window_behavior_dialog(
                 let weak = weak.clone();
                 move |checked, _window, cx| {
                     let _ = weak.update(cx, |app, cx| {
-                        app.set_start_minimized(*checked, cx);
+                        app.set_debug_logging(*checked, cx);
                     });
                 }
             },
