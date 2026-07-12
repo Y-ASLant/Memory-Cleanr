@@ -22,19 +22,12 @@ pub fn log_file_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("App.log"))
 }
 
-fn now_secs() -> Option<u64> {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .map(|d| d.as_secs())
-}
-
 fn parse_line_timestamp(line: &str) -> Option<u64> {
     let inner = line.strip_prefix('[')?.split(']').next()?;
     inner.split('.').next()?.parse().ok()
 }
 
-fn purge_stale_entries(path: &Path) {
+fn purge_stale_entries(path: &Path, now: u64) {
     let Ok(content) = std::fs::read_to_string(path) else {
         return;
     };
@@ -42,9 +35,6 @@ fn purge_stale_entries(path: &Path) {
         return;
     }
 
-    let Some(now) = now_secs() else {
-        return;
-    };
     let cutoff = now.saturating_sub(LOG_RETENTION_SECS);
 
     let mut kept = String::new();
@@ -75,11 +65,12 @@ fn purge_stale_entries(path: &Path) {
     }
 }
 
-fn timestamp() -> String {
+fn timestamp() -> (String, u64) {
     let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
-        return "unknown".into();
+        return ("unknown".into(), 0);
     };
-    format!("{}.{:03}", duration.as_secs(), duration.subsec_millis())
+    let secs = duration.as_secs();
+    (format!("{secs}.{:03}", duration.subsec_millis()), secs)
 }
 
 /// Append a line to `App.log` when debug logging is enabled.
@@ -92,10 +83,11 @@ pub fn write(msg: &str) {
         return;
     };
 
+    let (ts, now) = timestamp();
     let path = log_file_path();
-    purge_stale_entries(&path);
+    purge_stale_entries(&path, now);
 
-    let line = format!("[{}] {msg}\n", timestamp());
+    let line = format!("[{ts}] {msg}\n");
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
         let _ = file.write_all(line.as_bytes());
     }

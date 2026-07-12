@@ -74,11 +74,11 @@ const OPTIMIZE_STEPS: &[OptimizeStep] = &[
     },
     OptimizeStep {
         area: MemoryAreas::STANDBY_LIST,
-        run: optimize_standby_list_normal,
+        run: || optimize_standby_list(false),
     },
     OptimizeStep {
         area: MemoryAreas::STANDBY_LIST_LOW_PRIORITY,
-        run: optimize_standby_list_low,
+        run: || optimize_standby_list(true),
     },
     OptimizeStep {
         area: MemoryAreas::COMBINED_PAGE_LIST,
@@ -161,14 +161,6 @@ fn optimize_modified_page_list() -> Result<()> {
     )
 }
 
-fn optimize_standby_list_normal() -> Result<()> {
-    optimize_standby_list(false)
-}
-
-fn optimize_standby_list_low() -> Result<()> {
-    optimize_standby_list(true)
-}
-
 fn optimize_standby_list(low_priority: bool) -> Result<()> {
     let command = if low_priority {
         SystemMemoryListCommand::PurgeLowPriorityStandbyList
@@ -194,10 +186,6 @@ fn optimize_combined_page_list() -> Result<()> {
     Ok(())
 }
 
-pub fn fixed_drives() -> Vec<char> {
-    get_fixed_drives()
-}
-
 pub fn optimize_drive_cache(drive_letter: char) -> Result<()> {
     let path = format!("\\\\.\\{}:", drive_letter);
     let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
@@ -219,14 +207,16 @@ pub fn optimize_drive_cache(drive_letter: char) -> Result<()> {
         bail!("invalid handle for volume {drive_letter}:");
     }
 
-    let flush_ok = unsafe { FlushFileBuffers(h).is_ok() };
-    let last_error = unsafe { GetLastError() };
+    let flush_result = unsafe { FlushFileBuffers(h) };
+    if flush_result.is_err() {
+        let last_error = unsafe { GetLastError() };
+        unsafe {
+            let _ = CloseHandle(h);
+        }
+        bail!("FlushFileBuffers on volume {drive_letter}: failed ({last_error:?})");
+    }
     unsafe {
         let _ = CloseHandle(h);
-    }
-
-    if !flush_ok {
-        bail!("FlushFileBuffers on volume {drive_letter}: failed ({last_error:?})");
     }
 
     Ok(())
@@ -268,7 +258,7 @@ fn optimize_registry_cache() -> Result<()> {
     Ok(())
 }
 
-fn get_fixed_drives() -> Vec<char> {
+pub fn fixed_drives() -> Vec<char> {
     let mut drives = Vec::new();
     for letter in b'A'..=b'Z' {
         let path = format!("{}:\\", letter as char);

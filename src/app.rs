@@ -38,32 +38,16 @@ pub fn window_min_size() -> Size<Pixels> {
     )
 }
 
-fn build_section(
-    total: u64,
-    used: u64,
-    avail: u64,
-    used_percent: u32,
-    title: &str,
-) -> MemorySection {
-    MemorySection {
-        title: title.into(),
-        total,
-        used,
-        avail,
-        used_percent: used_percent as f32,
-    }
-}
-
 fn query_sections(show_virtual: bool) -> Result<(MemorySection, Option<MemorySection>)> {
     let status = MemoryStatus::query()?;
 
-    let physical = build_section(
-        status.total_phys,
-        status.used_phys(),
-        status.avail_phys,
-        status.memory_load,
-        "物理内存",
-    );
+    let physical = MemorySection {
+        title: "物理内存".into(),
+        total: status.total_phys,
+        used: status.used_phys(),
+        avail: status.avail_phys,
+        used_percent: status.memory_load as f32,
+    };
 
     let virtual_mem = if show_virtual {
         let virt_used = status
@@ -74,13 +58,13 @@ fn query_sections(show_virtual: bool) -> Result<(MemorySection, Option<MemorySec
         } else {
             0
         };
-        Some(build_section(
-            status.total_page_file,
-            virt_used,
-            status.avail_page_file,
-            virt_percent,
-            "虚拟内存",
-        ))
+        Some(MemorySection {
+            title: "虚拟内存".into(),
+            total: status.total_page_file,
+            used: virt_used,
+            avail: status.avail_page_file,
+            used_percent: virt_percent as f32,
+        })
     } else {
         None
     };

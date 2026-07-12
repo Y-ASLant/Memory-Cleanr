@@ -35,30 +35,29 @@ fn render_usage_ring(
     cx: &App,
     unavailable: bool,
 ) -> impl IntoElement {
-    let label_color = if unavailable {
-        cx.theme().muted_foreground
+    let (display_percent, color, label_color) = if unavailable {
+        (
+            0.0,
+            cx.theme().muted_foreground,
+            cx.theme().muted_foreground,
+        )
     } else {
-        cx.theme().foreground
-    };
-    let color = if unavailable {
-        cx.theme().muted_foreground
-    } else {
-        usage_color(used_percent, cx)
+        (
+            used_percent,
+            usage_color(used_percent, cx),
+            cx.theme().foreground,
+        )
     };
 
     ProgressCircle::new(id)
         .with_size(Size::Size(PROGRESS_CIRCLE_LAYOUT_SIZE))
-        .value(if unavailable { 0.0 } else { used_percent })
+        .value(display_percent)
         .color(color)
         .child(
-            Label::new(format_usage_percent(if unavailable {
-                0.0
-            } else {
-                used_percent
-            }))
-            .text_lg()
-            .font_weight(FontWeight::BOLD)
-            .text_color(label_color),
+            Label::new(format_usage_percent(display_percent))
+                .text_lg()
+                .font_weight(FontWeight::BOLD)
+                .text_color(label_color),
         )
 }
 
