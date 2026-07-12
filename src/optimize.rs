@@ -106,15 +106,41 @@ pub fn step_plan(areas: MemoryAreas) -> Result<StepPlan> {
         .collect())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn step_plan_rejects_empty_selection() {
+        assert!(step_plan(MemoryAreas::empty()).is_err());
+    }
+
+    #[test]
+    fn step_plan_preserves_optimize_order() {
+        let areas = MemoryAreas::MODIFIED_FILE_CACHE | MemoryAreas::WORKING_SET;
+        let plan = step_plan(areas).expect("plan");
+        let labels: Vec<_> = plan.into_iter().map(|(label, _)| label).collect();
+        assert_eq!(labels, vec!["工作集", "已修改文件"]);
+    }
+
+    #[test]
+    fn memory_area_labels_are_stable() {
+        assert_eq!(MemoryAreas::WORKING_SET.label(), "工作集");
+        assert_eq!(MemoryAreas::REGISTRY_CACHE.label(), "注册表缓存");
+    }
+}
+
 fn purge_memory_list(command: SystemMemoryListCommand, privilege: &str, what: &str) -> Result<()> {
     enable_privilege(privilege).with_context(|| format!("{what} requires {privilege}"))?;
-    nt_set_system_information(
-        InfoClass::MemoryList,
-        (&command as *const SystemMemoryListCommand)
-            .cast_mut()
-            .cast::<core::ffi::c_void>(),
-        std::mem::size_of::<SystemMemoryListCommand>() as u32,
-    )
+    unsafe {
+        nt_set_system_information(
+            InfoClass::MemoryList,
+            (&command as *const SystemMemoryListCommand)
+                .cast_mut()
+                .cast::<core::ffi::c_void>(),
+            std::mem::size_of::<SystemMemoryListCommand>() as u32,
+        )
+    }
     .with_context(|| format!("NtSetSystemInformation ({what}) failed"))?;
     Ok(())
 }
@@ -137,11 +163,13 @@ fn optimize_system_file_cache() -> Result<()> {
         ..Default::default()
     };
 
-    nt_set_system_information(
-        InfoClass::FileCache,
-        &cache_info as *const _ as *mut _,
-        std::mem::size_of::<SystemFileCacheInformation64>() as u32,
-    )
+    unsafe {
+        nt_set_system_information(
+            InfoClass::FileCache,
+            &cache_info as *const _ as *mut _,
+            std::mem::size_of::<SystemFileCacheInformation64>() as u32,
+        )
+    }
     .context("NtSetSystemInformation (SystemFileCacheInformation) failed")?;
 
     unsafe {
@@ -176,11 +204,13 @@ fn optimize_combined_page_list() -> Result<()> {
 
     let combine_info = MemoryCombineInformationEx::default();
 
-    nt_set_system_information(
-        InfoClass::CombinePhysicalMemory,
-        &combine_info as *const _ as *mut _,
-        std::mem::size_of::<MemoryCombineInformationEx>() as u32,
-    )
+    unsafe {
+        nt_set_system_information(
+            InfoClass::CombinePhysicalMemory,
+            &combine_info as *const _ as *mut _,
+            std::mem::size_of::<MemoryCombineInformationEx>() as u32,
+        )
+    }
     .context("NtSetSystemInformation (Combined Page List) failed")?;
 
     Ok(())

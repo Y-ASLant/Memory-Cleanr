@@ -9,7 +9,23 @@ static DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 static LOG_LOCK: Mutex<()> = Mutex::new(());
 
 /// Drop log lines whose `[unix_secs.millis]` timestamp is older than this.
-const LOG_RETENTION_SECS: u64 = 7 * 24 * 60 * 60;
+pub const LOG_RETENTION_SECS: u64 = 7 * 24 * 60 * 60;
+
+/// Write a diagnostic message to the Windows debug stream (viewable via DebugView)
+/// and, when stderr is attached, also to stderr.
+pub fn log_msg(msg: &str) {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn OutputDebugStringA(lp_output_string: *const u8);
+    }
+    let mut bytes = format!("{msg}\n").into_bytes();
+    bytes.push(0);
+    unsafe {
+        OutputDebugStringA(bytes.as_ptr());
+    }
+    eprintln!("{msg}");
+    write(msg);
+}
 
 pub fn set_debug_enabled(enabled: bool) {
     DEBUG_ENABLED.store(enabled, Ordering::Relaxed);
@@ -22,7 +38,7 @@ pub fn log_file_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("App.log"))
 }
 
-fn parse_line_timestamp(line: &str) -> Option<u64> {
+pub(crate) fn parse_line_timestamp(line: &str) -> Option<u64> {
     let inner = line.strip_prefix('[')?.split(']').next()?;
     inner.split('.').next()?.parse().ok()
 }
@@ -90,5 +106,24 @@ pub fn write(msg: &str) {
     let line = format!("[{ts}] {msg}\n");
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
         let _ = file.write_all(line.as_bytes());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_line_timestamp_reads_unix_prefix() {
+        assert_eq!(
+            parse_line_timestamp("[1700000000.123] hello\n"),
+            Some(1_700_000_000)
+        );
+        assert_eq!(parse_line_timestamp("no timestamp"), None);
+    }
+
+    #[test]
+    fn retention_window_is_seven_days() {
+        assert_eq!(LOG_RETENTION_SECS, 7 * 24 * 60 * 60);
     }
 }

@@ -7,6 +7,7 @@ use gpui_component::WindowExt;
 use smol::Timer;
 
 use crate::memory::{MemorySection, MemoryStatus};
+use crate::messages::{build_cleanup_result_message, format_freed_message};
 use crate::optimize::{self, MemoryAreas};
 use crate::settings::Settings;
 use crate::tray::{TrayCommand, dispatch_command};
@@ -386,30 +387,8 @@ impl MemoryCleanerApp {
         .detach();
     }
 
-    fn format_freed_message(avail_before: u64, avail_after: u64) -> String {
-        if avail_after > avail_before {
-            format!(
-                "+{}",
-                MemoryStatus::format_bytes(avail_after - avail_before)
-            )
-        } else {
-            String::new()
-        }
-    }
-
-    fn build_result_message(completed: &[&str], errors: &[&str], freed_detail: &str) -> String {
-        match (completed.is_empty(), errors.is_empty()) {
-            (true, true) => "未执行清理".into(),
-            (true, false) => format!("清理失败：{}", errors.join("、")),
-            (false, true) => {
-                if freed_detail.is_empty() {
-                    format!("清理完成（{} 项）", completed.len())
-                } else {
-                    format!("清理完成 · {freed_detail}")
-                }
-            }
-            (false, false) => format!("完成 {} 项，失败：{}", completed.len(), errors.join("、")),
-        }
+    pub(crate) fn is_busy(&self) -> bool {
+        self.is_refreshing_icon_cache || self.is_optimizing
     }
 
     async fn run_optimize_step(
@@ -549,12 +528,12 @@ impl MemoryCleanerApp {
             let _ = this.update(cx, |app, cx| {
                 let _ = app.refresh_memory(cx);
                 let avail_after = app.physical.avail;
-                let freed_detail = Self::format_freed_message(avail_before, avail_after);
+                let freed_detail = format_freed_message(avail_before, avail_after);
                 app.optimize_step.clear();
                 app.is_optimizing = false;
                 app.optimize_percent = 0.0;
                 app.optimize_status =
-                    Self::build_result_message(&completed, &errors, &freed_detail);
+                    build_cleanup_result_message(&completed, &errors, &freed_detail);
                 crate::log::write(&format!("[optimize] 结果: {}", app.optimize_status));
                 cx.notify();
             });
@@ -630,10 +609,6 @@ impl MemoryCleanerApp {
             });
         })
         .detach();
-    }
-
-    pub(crate) fn is_busy(&self) -> bool {
-        self.is_refreshing_icon_cache || self.is_optimizing
     }
 }
 

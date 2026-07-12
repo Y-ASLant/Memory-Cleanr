@@ -88,6 +88,13 @@ impl Settings {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_toml(content: &str) -> Self {
+        let mut settings: Settings = toml::from_str(content).expect("valid settings toml");
+        settings.normalize_memory_areas();
+        settings
+    }
+
     pub fn save(&self) {
         Self::ensure_config_dir();
         let Ok(content) = toml::to_string_pretty(self) else {
@@ -121,5 +128,42 @@ impl Settings {
             areas.remove(MemoryAreas::STANDBY_LIST_LOW_PRIORITY);
         }
         areas
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::optimize::MemoryAreas;
+
+    #[test]
+    fn default_settings_match_documented_values() {
+        let settings = Settings::default();
+        assert!(settings.close_to_notification_area);
+        assert!(settings.show_virtual_memory);
+        assert_eq!(settings.memory_areas, MemoryAreas::DEFAULT.bits());
+    }
+
+    #[test]
+    fn toml_roundtrip_preserves_fields() {
+        let original = Settings {
+            always_on_top: true,
+            debug_logging: true,
+            memory_areas: MemoryAreas::WORKING_SET.bits(),
+            ..Default::default()
+        };
+        let restored: Settings = toml::from_str(&toml::to_string(&original).unwrap()).unwrap();
+        assert_eq!(restored.always_on_top, true);
+        assert_eq!(restored.debug_logging, true);
+        assert_eq!(restored.memory_areas, MemoryAreas::WORKING_SET.bits());
+    }
+
+    #[test]
+    fn standby_areas_are_mutually_exclusive_after_normalize() {
+        let both = MemoryAreas::STANDBY_LIST.bits() | MemoryAreas::STANDBY_LIST_LOW_PRIORITY.bits();
+        let settings = Settings::from_toml(&format!("memory_areas = {both}"));
+        let areas = settings.memory_areas();
+        assert!(areas.contains(MemoryAreas::STANDBY_LIST));
+        assert!(!areas.contains(MemoryAreas::STANDBY_LIST_LOW_PRIORITY));
     }
 }

@@ -46,6 +46,9 @@ make fmt                  # cargo fmt
 # Lint (clippy with -D warnings — warnings are errors)
 make check                # cargo clippy -- -D warnings
 
+# Test
+make test                 # cargo test
+
 # Build (release, runs clippy first)
 make build                # cargo build --release
 
@@ -59,7 +62,7 @@ cargo run --release
 make clean                # cargo clean
 ```
 
-**No test suite exists.** There are no `#[test]` functions, no `tests/` directory, no `[dev-dependencies]`, and no CI/CD configuration.
+**Tests:** `make test` / `cargo test` — 18 unit tests in `src/` plus 2 integration tests in `tests/settings_persistence.rs`. Pure logic (memory formatting, cleanup messages, settings TOML, tray tooltip text, optimize step plan, layout metrics) is covered; Win32/GPUI paths remain manual QA.
 
 ## Code Conventions & Common Patterns
 
@@ -120,7 +123,7 @@ These fields exist in `settings.toml` for forward compatibility but have no runt
 
 ## Testing & QA
 
-- **No tests exist.** Zero unit tests, integration tests, or benchmarks.
-- **No CI/CD** pipelines configured.
-- **Manual testing** is the current workflow — run `cargo run` or `cargo run --release` on a Windows machine with admin privileges.
-- **Diagnostics:** Use DebugView (Sysinternals) to read `OutputDebugStringA` output. Enable debug logging in the window-behavior dialog to capture detailed traces in `App.log`.
+- **Unit tests:** `cargo test` — memory formatting, cleanup messages, settings TOML, tray tooltip, optimize step plan, layout metrics, icon-cache outcomes.
+- **Integration tests:** `tests/settings_persistence.rs` — settings save/load and atomic write in isolated `%APPDATA%`.
+- **Manual QA:** Win32 memory cleanup, tray, GPUI dialogs, Explorer restart (admin required).
+- **Diagnostics:** DebugView for `OutputDebugString`; optional `App.log` when debug logging is enabled.

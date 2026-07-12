@@ -61,6 +61,17 @@ fn tray() -> Option<&'static Tray> {
     }
 }
 
+pub fn format_memory_tooltip(
+    physical: &MemorySection,
+    virtual_mem: Option<&MemorySection>,
+) -> String {
+    let mut lines = vec![format!("物理内存: {}", physical.percent_label())];
+    if let Some(virtual_mem) = virtual_mem {
+        lines.push(format!("虚拟内存: {}", virtual_mem.percent_label()));
+    }
+    lines.join("\n")
+}
+
 pub fn sync_display(
     physical: &MemorySection,
     virtual_mem: Option<&MemorySection>,
@@ -72,20 +83,12 @@ pub fn sync_display(
 
     let _ = tray
         .icon
-        .set_tooltip(Some(memory_tooltip(physical, virtual_mem)));
+        .set_tooltip(Some(format_memory_tooltip(physical, virtual_mem)));
     tray.toggle_window.set_text(if window_visible {
         "隐藏窗口"
     } else {
         "显示窗口"
     });
-}
-
-fn memory_tooltip(physical: &MemorySection, virtual_mem: Option<&MemorySection>) -> String {
-    let mut lines = vec![format!("物理内存: {}", physical.percent_label())];
-    if let Some(virtual_mem) = virtual_mem {
-        lines.push(format!("虚拟内存: {}", virtual_mem.percent_label()));
-    }
-    lines.join("\n")
 }
 
 fn install_event_handlers(tx: Sender<TrayCommand>) {
@@ -161,5 +164,35 @@ pub fn dispatch_command(
     match command {
         TrayCommand::ActivateWindow => app.activate_window(cx),
         TrayCommand::MenuAction(action) => app.handle_tray_action(&action, cx),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::MemorySection;
+
+    fn section(title: &str, percent: f32) -> MemorySection {
+        MemorySection {
+            title: title.into(),
+            total: 16 * 1024 * 1024 * 1024,
+            used: 8 * 1024 * 1024 * 1024,
+            avail: 8 * 1024 * 1024 * 1024,
+            used_percent: percent,
+        }
+    }
+
+    #[test]
+    fn format_memory_tooltip_includes_virtual_memory_when_present() {
+        let physical = section("物理内存", 46.0);
+        let virtual_mem = section("虚拟内存", 86.0);
+        let tooltip = format_memory_tooltip(&physical, Some(&virtual_mem));
+        assert_eq!(tooltip, "物理内存: 46%\n虚拟内存: 86%");
+    }
+
+    #[test]
+    fn format_memory_tooltip_omits_virtual_memory_when_absent() {
+        let physical = section("物理内存", 46.0);
+        assert_eq!(format_memory_tooltip(&physical, None), "物理内存: 46%");
     }
 }

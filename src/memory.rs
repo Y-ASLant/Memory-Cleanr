@@ -97,3 +97,42 @@ impl MemoryStatus {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_section(used_percent: f32) -> MemorySection {
+        MemorySection {
+            title: "物理内存".into(),
+            total: 8 * 1024 * 1024 * 1024,
+            used: 4 * 1024 * 1024 * 1024,
+            avail: 4 * 1024 * 1024 * 1024,
+            used_percent,
+        }
+    }
+
+    #[test]
+    fn format_bytes_uses_gb_and_mb() {
+        assert_eq!(
+            MemoryStatus::format_bytes(2 * 1024 * 1024 * 1024),
+            "2.00 GB"
+        );
+        assert_eq!(MemoryStatus::format_bytes(512 * 1024 * 1024), "512.00 MB");
+    }
+
+    #[test]
+    fn percent_label_rounds_and_handles_unavailable() {
+        assert_eq!(sample_section(45.4).percent_label(), "45%");
+        assert_eq!(sample_section(45.6).percent_label(), "46%");
+        assert_eq!(MemorySection::unavailable("物理内存").percent_label(), "—");
+    }
+
+    #[test]
+    fn usage_summary_formats_used_and_available() {
+        let summary = sample_section(50.0).usage_summary();
+        assert!(summary.contains("已用 4.00 GB"));
+        assert!(summary.contains("可用 4.00 GB"));
+        assert_eq!(MemorySection::unavailable("物理内存").usage_summary(), "—");
+    }
+}

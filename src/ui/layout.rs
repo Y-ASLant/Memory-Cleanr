@@ -82,3 +82,21 @@ pub fn centered_dialog_margin_top(
     let offset = (usable - px(dialog_height)) / 2.;
     (px(title_bar_height) + offset.max(px(0.))).max(px(title_bar_height))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expanded_window_is_taller_than_collapsed() {
+        let collapsed = collapsed_window_height(6.);
+        let expanded = expanded_window_height(6.);
+        assert!(expanded > collapsed);
+    }
+
+    #[test]
+    fn centered_dialog_margin_top_stays_below_title_bar() {
+        let margin = centered_dialog_margin_top(px(600.), 248., TITLE_BAR_H);
+        assert!(margin >= px(TITLE_BAR_H));
+    }
+}

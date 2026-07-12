@@ -1,47 +1,14 @@
 #![windows_subsystem = "windows"]
 
-mod app;
-mod icon_cache;
-mod log;
-mod memory;
-mod optimize;
-mod privileges;
-mod settings;
-mod tray;
-mod ui;
-mod version;
-mod win32;
-
 use gpui::{actions, *};
 use gpui_component::{Root, TitleBar};
 
-use crate::version::APP_NAME;
-use app::MemoryCleanerApp;
-use settings::Settings;
-use tray::Tray;
+use memory_cleanr::{app, log_msg, settings::Settings, tray::Tray, ui, version::APP_NAME, win32};
 
 actions!(wmc_gpui, [Quit]);
 
 /// Passed to the elevated instance so it does not re-trigger UAC.
 const ELEVATED_ARG: &str = "--elevated";
-
-/// Write a diagnostic message to the Windows debug stream (viewable via
-/// DebugView) and, when stderr is attached, also to stderr. Used instead of
-/// bare `eprintln!` because the app is built with `windows_subsystem = "windows"`,
-/// which makes stderr invisible in release builds.
-pub fn log_msg(msg: &str) {
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn OutputDebugStringA(lp_output_string: *const u8);
-    }
-    let mut bytes = format!("{msg}\n").into_bytes();
-    bytes.push(0);
-    unsafe {
-        OutputDebugStringA(bytes.as_ptr());
-    }
-    eprintln!("{msg}");
-    crate::log::write(msg);
-}
 
 /// If the current process is not running as administrator, re-launch
 /// itself with `ShellExecuteW("runas")` and exit. This avoids embedding
@@ -152,7 +119,7 @@ fn main() {
 
                 let settings = Settings::load();
                 let app_entity = cx.new(|cx| {
-                    let view = MemoryCleanerApp::new(window, cx, settings, tray_rx);
+                    let view = app::MemoryCleanerApp::new(window, cx, settings, tray_rx);
                     window.activate_window();
                     view
                 });
@@ -162,7 +129,7 @@ fn main() {
                     cx.quit();
                 });
                 let _ = win32::window::remove_maximize_button(window);
-                crate::ui::theme::init_light_theme(window, cx);
+                ui::theme::init_light_theme(window, cx);
                 cx.new(|cx| Root::new(app_entity, window, cx))
             })
             .expect("Failed to open window");

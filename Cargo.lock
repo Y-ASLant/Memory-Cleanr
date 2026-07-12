@@ -3545,6 +3545,7 @@ dependencies = [
  "raw-window-handle",
  "serde",
  "smol",
+ "tempfile",
  "toml 1.1.2+spec-1.1.0",
  "tray-icon",
  "windows 0.62.2",

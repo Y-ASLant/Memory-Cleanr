@@ -14,10 +14,6 @@ const PROGRESS_CIRCLE_LAYOUT_SIZE: Pixels = px(MEMORY_RING_SIZE / 0.75);
 /// 卡片容器上下内边距（app 中 GroupBox 内 v_flex 使用）。
 pub const MEMORY_CARD_PY: f32 = 2.;
 
-fn format_usage_percent(used_percent: f32) -> String {
-    format!("{}%", used_percent.round() as u32)
-}
-
 fn usage_color(percent: f32, cx: &App) -> Hsla {
     let theme = cx.theme();
     if percent >= 90.0 {
@@ -29,12 +25,8 @@ fn usage_color(percent: f32, cx: &App) -> Hsla {
     }
 }
 
-fn render_usage_ring(
-    id: &'static str,
-    used_percent: f32,
-    cx: &App,
-    unavailable: bool,
-) -> impl IntoElement {
+fn render_usage_ring(id: &'static str, section: &MemorySection, cx: &App) -> impl IntoElement {
+    let unavailable = section.is_unavailable();
     let (display_percent, color, label_color) = if unavailable {
         (
             0.0,
@@ -43,8 +35,8 @@ fn render_usage_ring(
         )
     } else {
         (
-            used_percent,
-            usage_color(used_percent, cx),
+            section.used_percent,
+            usage_color(section.used_percent, cx),
             cx.theme().foreground,
         )
     };
@@ -54,7 +46,7 @@ fn render_usage_ring(
         .value(display_percent)
         .color(color)
         .child(
-            Label::new(format_usage_percent(display_percent))
+            Label::new(section.percent_label())
                 .text_lg()
                 .font_weight(FontWeight::BOLD)
                 .text_color(label_color),
@@ -75,7 +67,7 @@ pub fn render_memory_card(
         IconName::HardDrive
     };
 
-    let ring = render_usage_ring(id, section.used_percent, cx, unavailable);
+    let ring = render_usage_ring(id, section, cx);
 
     let summary = if unavailable {
         "无法读取内存信息".into()

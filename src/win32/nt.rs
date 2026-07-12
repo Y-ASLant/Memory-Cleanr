@@ -53,7 +53,10 @@ unsafe extern "system" {
     ) -> i32;
 }
 
-pub fn nt_set_system_information(
+/// # Safety
+///
+/// `info` must point to valid memory of at least `len` bytes for `class`.
+pub unsafe fn nt_set_system_information(
     class: InfoClass,
     info: *mut core::ffi::c_void,
     len: u32,

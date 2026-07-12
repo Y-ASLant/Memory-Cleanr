@@ -164,3 +164,29 @@ fn notify_shell() {
 fn to_wide(value: &str) -> Vec<u16> {
     OsStr::new(value).encode_wide().chain(Some(0)).collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_message_reflects_restart_and_failures() {
+        let ok = RefreshOutcome {
+            explorer_restarted: true,
+            failures: vec![],
+        };
+        assert_eq!(ok.user_message(), "桌面图标缓存已刷新");
+
+        let partial = RefreshOutcome {
+            explorer_restarted: true,
+            failures: vec!["删除失败: foo".into()],
+        };
+        assert_eq!(partial.user_message(), "已刷新，部分缓存未能清理");
+
+        let failed = RefreshOutcome {
+            explorer_restarted: false,
+            failures: vec!["重启 explorer 失败".into()],
+        };
+        assert_eq!(failed.user_message(), "刷新失败：无法重启资源管理器");
+    }
+}
