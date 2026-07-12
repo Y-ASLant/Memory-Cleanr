@@ -6,7 +6,7 @@ rust-version = "1.96"
 description = "Memory Cleaner - GPUI GUI"
 
 [[bin]]
-name = "memory-cleanr"
+name = "MemoryCleanr"
 path = "src/main.rs"
 
 [dependencies]
@@ -14,8 +14,8 @@ anyhow = "1"
 bitflags = "2"
 gpui = { git = "https://github.com/zed-industries/zed" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit"] }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "9ad30e631e15f9bbba049717767bf4cd98e4f179" }
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "9ad30e631e15f9bbba049717767bf4cd98e4f179" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "0775df394083c1ed74f36f846b78868d1267398f" }
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "0775df394083c1ed74f36f846b78868d1267398f" }
 serde = { version = "1", features = ["derive"] }
 smol = "2"
 raw-window-handle = "0.6"
@@ -32,7 +32,6 @@ windows = { version = "0.62", features = [
     "Win32_System_IO",
     "Win32_Storage_FileSystem",
     "Win32_UI_WindowsAndMessaging",
-    "Win32_UI_Shell",
 ] }
 
 [profile.release]

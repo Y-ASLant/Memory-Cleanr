@@ -1,9 +1,9 @@
 use anyhow::{Context, Result, bail};
 use windows::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, GetLastError, HANDLE, LUID};
 use windows::Win32::Security::{
-    AdjustTokenPrivileges, GetTokenInformation, LUID_AND_ATTRIBUTES, LookupPrivilegeValueW,
-    SE_PRIVILEGE_ENABLED, TOKEN_ACCESS_MASK, TOKEN_ADJUST_PRIVILEGES, TOKEN_ELEVATION,
-    TOKEN_PRIVILEGES, TOKEN_PRIVILEGES_ATTRIBUTES, TOKEN_QUERY, TokenElevation,
+    AdjustTokenPrivileges, LUID_AND_ATTRIBUTES, LookupPrivilegeValueW, SE_PRIVILEGE_ENABLED,
+    TOKEN_ACCESS_MASK, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_PRIVILEGES_ATTRIBUTES,
+    TOKEN_QUERY,
 };
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows::core::PCWSTR;
@@ -46,22 +46,5 @@ pub fn enable_privilege(name: &str) -> Result<()> {
         }
 
         Ok(())
-    })
-}
-
-pub fn is_elevated() -> Result<bool> {
-    with_process_token(TOKEN_QUERY, |token| unsafe {
-        let mut elevation = TOKEN_ELEVATION::default();
-        let mut returned = 0u32;
-        GetTokenInformation(
-            token,
-            TokenElevation,
-            Some(&mut elevation as *mut _ as *mut _),
-            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
-            &mut returned,
-        )
-        .context("GetTokenInformation failed")?;
-
-        Ok(elevation.TokenIsElevated != 0)
     })
 }

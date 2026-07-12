@@ -42,56 +42,68 @@ pub fn log_msg(msg: &str) {
     eprintln!("{msg}");
 }
 
-/// Check if running as admin, and if not, re-launch elevated.
+
+/// If the current process is not running as administrator, re-launch
+/// itself with `ShellExecuteW("runas")` and exit. This avoids embedding
+/// a `requireAdministrator` manifest (which conflicts with GPUI's own
+/// manifest via Cargo feature unification).
 #[cfg(target_os = "windows")]
 fn ensure_elevated() {
-    use privileges::is_elevated;
-    if is_elevated().unwrap_or(false) {
-        return;
-    }
-
     use std::os::windows::ffi::OsStrExt;
-    use windows::Win32::UI::Shell::ShellExecuteW;
-    use windows::Win32::UI::WindowsAndMessaging::SW_NORMAL;
 
-    let exe = std::env::current_exe().expect("failed to get exe path");
-    let wide: Vec<u16> = exe
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-    let verb: Vec<u16> = std::ffi::OsStr::new("runas")
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-
-    // ShellExecuteW returns an HINSTANCE value; > 32 indicates success.
-    let result = unsafe {
-        ShellExecuteW(
-            None,
-            windows::core::PCWSTR(verb.as_ptr()),
-            windows::core::PCWSTR(wide.as_ptr()),
-            None,
-            None,
-            SW_NORMAL,
-        )
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Security::{
+        GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
     };
-    if result.0 as isize <= 32 {
-        eprintln!(
-            "Failed to relaunch elevated (ShellExecuteW returned {}); exiting",
-            result.0 as isize
-        );
-        std::process::exit(1);
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    unsafe {
+        // Check current elevation status.
+        let mut token = HANDLE::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_ok() {
+            let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
+            let mut ret_len = 0u32;
+            let ok = GetTokenInformation(
+                token,
+                TokenElevation,
+                Some((&raw mut elevation).cast()),
+                std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+                &mut ret_len,
+            );
+            if ok.is_ok() && elevation.TokenIsElevated != 0 {
+                return; // Already admin.
+            }
+        }
+
+        // Not admin — re-launch elevated.
+        // We call ShellExecuteW directly via FFI to avoid adding the
+        // Win32_UI_Shell cargo feature (and its transitive deps).
+        #[link(name = "shell32")]
+        unsafe extern "system" {
+            fn ShellExecuteW(
+                hwnd: isize,
+                lpszverb: *const u16,
+                lpszfile: *const u16,
+                lpszparams: *const u16,
+                lpszdir: *const u16,
+                nshowcmd: i32,
+            ) -> isize;
+        }
+
+        let exe = std::env::current_exe().expect("cannot determine exe path");
+        let path: Vec<u16> = exe.as_os_str().encode_wide().chain(Some(0)).collect();
+        let verb: Vec<u16> = "runas\0".encode_utf16().collect();
+
+        let h = ShellExecuteW(0, verb.as_ptr(), path.as_ptr(), std::ptr::null(), std::ptr::null(), 1);
+        if h > 32 {
+            std::process::exit(0);
+        }
+        // If elevation failed (user cancelled UAC), fall through to run
+        // without admin.  Some cleanup areas will fail but the app works.
     }
-    std::process::exit(0);
 }
-
-#[cfg(not(target_os = "windows"))]
-fn ensure_elevated() {}
-
 fn main() {
     ensure_elevated();
-
     if let Err(e) = win32::single_instance::ensure_single_instance() {
         log_msg(&e.to_string());
         std::process::exit(0);
