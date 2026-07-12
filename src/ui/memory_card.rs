@@ -12,7 +12,7 @@ use gpui_component::{
 
 use crate::memory::MemorySection;
 
-pub const RING_ANIM_DURATION_MS: u64 = 450;
+pub const RING_ANIM_DURATION_MS: u64 = 300;
 
 const OUTER_RADIUS: f32 = 55.;
 const INNER_RADIUS: f32 = 35.;

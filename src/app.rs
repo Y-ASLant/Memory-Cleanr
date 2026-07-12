@@ -14,7 +14,7 @@ use crate::ui::layout::SECTION_GAP;
 use crate::ui::memory_card::{RING_ANIM_DURATION_MS, RingAnim};
 use crate::win32;
 
-pub const TRAY_POLL: Duration = Duration::from_millis(200);
+pub const TRAY_POLL: Duration = Duration::from_millis(1000);
 const SETTINGS_SAVE_DEBOUNCE: Duration = Duration::from_millis(300);
 const OPTIMIZE_RESULT_DISPLAY: Duration = Duration::from_secs(5);
 
@@ -420,7 +420,7 @@ impl MemoryCleanerApp {
     }
 
     pub fn start_background_poll(&self, cx: &mut Context<Self>) {
-        const MEMORY_POLL_TICKS: u32 = 15;
+        const MEMORY_POLL_TICKS: u32 = 5; // 5 × TRAY_POLL ≈ 5 s memory refresh
 
         cx.spawn(async move |this, cx| {
             let mut ticks = 0u32;
