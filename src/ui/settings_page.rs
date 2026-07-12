@@ -267,7 +267,7 @@ pub fn render_window_behavior_dialog(
                 id: "dialog-switch-debug-logging",
                 icon: IconName::Settings2,
                 title: "调试日志",
-                description: "将详细运行信息写入程序目录下的 App.log",
+                description: "将详细运行信息写入程序目录下的 App.log（自动清理 7 天前的记录）",
                 checked: settings.debug_logging,
             },
             muted,
