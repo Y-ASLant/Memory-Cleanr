@@ -101,8 +101,11 @@ settings.cleanup_areas_hint:
   zh-CN: "提示：「待机列表」与「待机列表(低优先级)」只能勾选其一"
   en: "Tip: \"Standby List\" and \"Standby List (Low)\" are mutually exclusive"
 settings.language:
-  zh-CN: "语言"
-  en: "Language"
+  zh-CN: "界面语言"
+  en: "Interface Language"
+settings.language_desc:
+  zh-CN: "选择界面显示语言"
+  en: "Select the interface display language"
 settings.language_auto:
   zh-CN: "跟随系统"
   en: "Auto"

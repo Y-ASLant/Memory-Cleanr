@@ -1,10 +1,11 @@
-use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui::*;
 use gpui_component::{
     ActiveTheme, Disableable, Icon, IconName, Sizable,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     h_flex,
+    kbd::Kbd,
     label::Label,
     menu::{DropdownMenu, PopupMenuItem},
     progress::ProgressCircle,
@@ -16,6 +17,7 @@ use rust_i18n::t;
 use crate::app::{CONTENT_PADDING, MemoryCleanerApp};
 use crate::optimize::MemoryAreas;
 use crate::ui::layout::{CLEANUP_BUTTON_H, SECTION_GAP};
+use crate::win32::hotkey::HotkeyBinding;
 
 const ROW_GAP: f32 = 6.;
 const BUTTON_STATUS_TRUNCATE_CHARS: usize = 24;
@@ -245,25 +247,24 @@ fn render_language_selector(
         .gap_3()
         .py(px(3.))
         .child(
-            v_flex().flex_1().min_w_0().gap(px(1.)).child(
-                h_flex()
-                    .w_full()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .child(Icon::new(IconName::Globe).small().text_color(muted)),
-                    )
-                    .child(
-                        Label::new(t!("settings.language").to_string())
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(foreground),
-                    ),
-            ),
+            h_flex()
+                .flex_1()
+                .min_w_0()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .child(Icon::new(IconName::Globe).small().text_color(muted)),
+                )
+                .child(
+                    Label::new(t!("settings.language").to_string())
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(foreground),
+                ),
         )
         .child({
             let weak = weak.clone();
@@ -296,6 +297,33 @@ fn render_language_selector(
         })
 }
 
+fn cleanup_hotkey_display(
+    recording: bool,
+    chord: &str,
+    border: Hsla,
+    background: Hsla,
+    foreground: Hsla,
+    primary: Hsla,
+    muted: Hsla,
+) -> Div {
+    if recording {
+        div().child(
+            Label::new(t!("settings.cleanup_hotkey_recording").to_string())
+                .text_sm()
+                .text_color(primary),
+        )
+    } else if let Some(keystroke) = HotkeyBinding::chord_to_keystroke(chord) {
+        div().child(
+            Kbd::new(keystroke)
+                .bg(background)
+                .border_color(border)
+                .text_color(foreground),
+        )
+    } else {
+        div().child(Label::new(chord.to_string()).text_sm().text_color(muted))
+    }
+}
+
 fn render_cleanup_hotkey_row(
     weak: &WeakEntity<MemoryCleanerApp>,
     muted: Hsla,
@@ -311,14 +339,10 @@ fn render_cleanup_hotkey_row(
     let recording = app.cleanup_hotkey_recording;
     let chord = app.settings.cleanup_hotkey.clone();
     let focus = app.hotkey_capture_focus.clone();
+    let border = cx.theme().border;
+    let background = cx.theme().background;
     let primary = cx.theme().primary;
     let radius = cx.theme().radius;
-
-    let button_label = if recording {
-        t!("settings.cleanup_hotkey_recording").to_string()
-    } else {
-        chord
-    };
 
     let weak_switch = weak.clone();
     let weak_capture = weak.clone();
@@ -345,11 +369,7 @@ fn render_cleanup_hotkey_row(
                                 .flex_shrink_0()
                                 .flex()
                                 .items_center()
-                                .child(
-                                    Icon::new(IconName::ALargeSmall)
-                                        .small()
-                                        .text_color(muted),
-                                ),
+                                .child(Icon::new(IconName::ALargeSmall).small().text_color(muted)),
                         )
                         .child(
                             Label::new(t!("settings.cleanup_hotkey").to_string())
@@ -381,10 +401,50 @@ fn render_cleanup_hotkey_row(
                 ),
         )
         .child(
-            v_flex()
+            h_flex()
                 .flex_shrink_0()
-                .items_end()
+                .items_center()
                 .gap_2()
+                .child(
+                    div()
+                        .id("cleanup-hotkey-capture")
+                        .track_focus(&focus)
+                        .min_w(px(128.))
+                        .h(px(28.))
+                        .px_2()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(radius)
+                        .border_1()
+                        .border_color(if recording { primary } else { border })
+                        .bg(background)
+                        .when(enabled, |this| this.cursor_pointer())
+                        .when(!enabled, |this| this.opacity(0.5))
+                        .on_key_down({
+                            let weak = weak_capture.clone();
+                            move |event, _, cx| {
+                                let _ = weak.update(cx, |app, cx| {
+                                    app.handle_cleanup_hotkey_key(event, cx);
+                                });
+                            }
+                        })
+                        .on_click({
+                            let weak = weak_capture;
+                            move |_, window, cx| {
+                                if !enabled {
+                                    return;
+                                }
+                                let _ = weak.update(cx, |app, cx| {
+                                    app.start_cleanup_hotkey_recording(window, cx);
+                                });
+                                window.focus(&focus_capture, cx);
+                            }
+                        })
+                        .child(cleanup_hotkey_display(
+                            recording, &chord, border, background, foreground, primary, muted,
+                        )),
+                )
                 .child(
                     Switch::new("dialog-switch-cleanup-hotkey")
                         .checked(enabled)
@@ -395,42 +455,6 @@ fn render_cleanup_hotkey_row(
                                     app.set_cleanup_hotkey_enabled(*checked, cx);
                                 });
                             }
-                        }),
-                )
-                .child(
-                    div()
-                        .id("cleanup-hotkey-capture")
-                        .track_focus(&focus)
-                        .when(recording, |this| {
-                            this.rounded(radius)
-                                .px_1()
-                                .py_0p5()
-                                .border_1()
-                                .border_color(primary)
-                        })
-                        .on_key_down({
-                            let weak = weak_capture.clone();
-                            move |event, _, cx| {
-                                let _ = weak.update(cx, |app, cx| {
-                                    app.handle_cleanup_hotkey_key(event, cx);
-                                });
-                            }
-                        })
-                        .child({
-                            let weak = weak_capture;
-                            Button::new("cleanup-hotkey-record")
-                                .ghost()
-                                .small()
-                                .min_w(px(128.))
-                                .disabled(!enabled)
-                                .when(recording, |button| button.primary())
-                                .label(button_label)
-                                .on_click(move |_, window, cx| {
-                                    let _ = weak.update(cx, |app, cx| {
-                                        app.start_cleanup_hotkey_recording(window, cx);
-                                    });
-                                    window.focus(&focus_capture, cx);
-                                })
                         }),
                 ),
         )
@@ -455,6 +479,7 @@ pub fn render_window_behavior_dialog(
         .w_full()
         .gap(px(2.))
         .child(render_language_selector(&weak, muted, foreground, cx))
+        .child(render_cleanup_hotkey_row(&weak, muted, foreground, cx))
         .child(switch_row_app(
             SwitchRowConfig {
                 id: "dialog-switch-always-on-top",
@@ -512,7 +537,6 @@ pub fn render_window_behavior_dialog(
                 }
             },
         ))
-        .child(render_cleanup_hotkey_row(&weak, muted, foreground, cx))
         .child(switch_row_app(
             SwitchRowConfig {
                 id: "dialog-switch-debug-logging",

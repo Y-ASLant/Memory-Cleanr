@@ -3,6 +3,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread::JoinHandle;
 
 use anyhow::{Context, Result, bail};
+use gpui::Keystroke;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
@@ -107,13 +108,60 @@ impl HotkeyBinding {
         let chord = parts.join("+");
         Self::parse(&chord).map(|_| chord)
     }
+
+    /// Convert a settings chord such as `Alt+Shift+C` into a GPUI `Keystroke` for `Kbd` display.
+    pub fn chord_to_keystroke(chord: &str) -> Option<Keystroke> {
+        let chord = chord.trim();
+        if chord.is_empty() {
+            return None;
+        }
+
+        let parts: Vec<&str> = chord
+            .split('+')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .collect();
+        if parts.len() < 2 {
+            return None;
+        }
+
+        let (modifiers, key) = parts.split_at(parts.len() - 1);
+        let mut tokens = Vec::<String>::new();
+        for modifier in modifiers {
+            let token = match modifier.to_ascii_lowercase().as_str() {
+                "ctrl" | "control" => "ctrl",
+                "alt" => "alt",
+                "shift" => "shift",
+                "win" | "windows" => "win",
+                _ => return None,
+            };
+            tokens.push(token.into());
+        }
+
+        let key = key[0].trim().to_ascii_lowercase();
+        if key.len() != 1 {
+            return None;
+        }
+        tokens.push(key);
+        Keystroke::parse(&tokens.join("-")).ok()
+    }
 }
 
 fn is_modifier_key(key: &str) -> bool {
     matches!(
         key.trim().to_ascii_lowercase().as_str(),
-        "shift" | "alt" | "control" | "ctrl" | "win" | "windows" | "super" | "cmd" | "meta"
-            | "fn" | "capslock" | "caps lock"
+        "shift"
+            | "alt"
+            | "control"
+            | "ctrl"
+            | "win"
+            | "windows"
+            | "super"
+            | "cmd"
+            | "meta"
+            | "fn"
+            | "capslock"
+            | "caps lock"
     )
 }
 
@@ -356,9 +404,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn chord_to_keystroke_parses_settings_chords() {
+        let keystroke = HotkeyBinding::chord_to_keystroke("Alt+Shift+C").expect("valid keystroke");
+        assert!(keystroke.modifiers.alt);
+        assert!(keystroke.modifiers.shift);
+        assert_eq!(keystroke.key, "c");
+
+        assert!(HotkeyBinding::chord_to_keystroke("Ctrl+5").is_some());
+        assert!(HotkeyBinding::chord_to_keystroke("invalid").is_none());
+    }
+
+    #[test]
     fn format_chord_builds_register_hotkey_compatible_chords() {
-        let chord = HotkeyBinding::format_chord(false, true, true, false, "c")
-            .expect("valid chord");
+        let chord =
+            HotkeyBinding::format_chord(false, true, true, false, "c").expect("valid chord");
         assert_eq!(chord, "Alt+Shift+C");
         assert!(HotkeyBinding::parse(&chord).is_some());
     }
