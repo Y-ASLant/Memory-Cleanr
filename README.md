@@ -1,19 +1,22 @@
 # Memory Cleanr
 
-Windows 内存清理工具，基于 Rust + GPUI 构建。提供实时内存监控、可配置的清理区域、系统托盘常驻，以及一键优化。
+Windows 内存清理工具，基于 Rust + GPUI 构建。提供实时内存监控、可配置的清理区域、系统托盘常驻、全局快捷键，以及一键优化。
 
 ## 功能
 
-- **实时内存监控** — 物理内存与虚拟内存使用情况，环形进度图可视化，约每 5 秒自动刷新
+- **实时内存监控** — 物理内存与虚拟内存使用情况，环形进度图可视化；主窗口可见时每 **1 秒** 自动刷新，隐藏到托盘后暂停轮询以节省 CPU；鼠标悬停托盘图标时也会即时刷新 Tooltip
 - **一键清理** — 按所选区域依次执行；进度与结果摘要显示在底部按钮内（完成后保留约 5 秒）
 - **可配置清理区域** — 8 种内存区域通过复选框勾选（待机列表与普通/低优先级互斥）
-- **系统托盘** — 右键菜单（优化内存、显示/隐藏窗口、退出）；左键单击显示主窗口
-- **窗口行为** — 标题栏齿轮菜单可配置置顶、关闭时隐藏到托盘、调试日志
-- **自定义标题栏** — 设置、展开/收起、最小化、关闭（无最大化按钮）
+- **全局快捷键** — 默认 `Alt+Shift+C` 触发清理；可在窗口行为对话框中开关、录制自定义组合键（`RegisterHotKey`）
+- **系统通知** — 清理开始与完成时弹出 Windows Toast（可在窗口行为对话框中关闭）
+- **系统托盘** — 右键菜单（优化内存、显示/隐藏窗口、退出）；左键单击显示/激活主窗口；后台线程纯事件驱动（`recv` 阻塞），无空转轮询
+- **窗口行为** — 标题栏齿轮菜单：置顶、关闭时隐藏到托盘、调试日志、优化通知、全局热键、语言
+- **桌面图标缓存刷新** — 标题栏刷新按钮；结束并重启 Explorer 以清理 `IconCache.db` 等缓存
+- **自定义标题栏** — 设置、图标缓存、展开/收起、最小化、关闭（无最大化按钮）
 - **配置持久化** — `%APPDATA%\MemoryCleaner\settings.toml`，首次运行自动创建
 - **调试日志** — 可选写入程序目录下的 `App.log`，按行内时间戳自动清理 7 天前的记录
 - **自动提权** — 启动时检测管理员权限，不足时触发 UAC 提升
-- **单实例** — 重复启动时激活已有窗口
+- **单实例** — 命名互斥量；重复启动时第二个实例直接退出
 - **平台 UI 适配** — Windows 11 使用默认圆角；Windows 10 自动切换直角按钮、卡片、对话框等（build &lt; 22000）
 - **界面国际化** — 简体中文 / English，窗口行为对话框中可切换；默认「跟随系统」（通过 `GetUserDefaultUILanguage` 检测）
 
@@ -52,12 +55,14 @@ cargo run --release
 
 主窗口固定宽度 **520px**，高度随展开状态变化（折叠约 **294px**，展开约 **456px**），自上而下分为：
 
-1. **标题栏** — 应用名称、窗口行为（齿轮图标）、展开/收起（箭头图标）、最小化、关闭
+1. **标题栏** — 应用名称、窗口行为（齿轮）、图标缓存刷新、展开/收起、最小化、关闭
 2. **内存卡片** — 物理内存与虚拟内存环形图（默认始终可见）
 3. **展开面板** — 点击箭头后展开「清理区域」复选框面板
 4. **一键清理** — 底部操作按钮；清理进度与结果直接显示在按钮内
 
-默认折叠，仅显示内存卡片与清理按钮；展开后窗口自动增高以容纳清理区域设置。窗口行为（置顶、关闭隐藏到托盘、调试日志、语言）通过标题栏齿轮图标打开的对话框配置；点击弹窗外空白区域不会关闭对话框。
+默认折叠，仅显示内存卡片与清理按钮；展开后窗口自动增高以容纳清理区域设置。窗口行为通过标题栏齿轮图标打开的对话框配置；点击弹窗外空白区域不会关闭对话框。
+
+关闭主窗口时，若开启「关闭时隐藏到托盘」，窗口会隐藏并销毁 GPUI 窗口句柄，进程继续在托盘运行；再次点击托盘图标可重新打开主窗口。
 
 ### 界面截图（Windows 10 / 11 对比）
 
@@ -110,6 +115,15 @@ cargo run --release
 | `memory_areas` | u32 | `111` | 清理区域位掩码（各 `MemoryAreas` 标志位之和） |
 | `language` | string | `"auto"` | 界面语言：`auto`（跟随系统）、`zh-CN`、`en` |
 | `debug_logging` | bool | `false` | 将详细运行信息写入程序目录下的 `App.log` |
+| `show_optimization_notifications` | bool | `true` | 清理开始/完成时弹出 Windows Toast |
+| `cleanup_hotkey_enabled` | bool | `true` | 启用全局清理热键 |
+| `cleanup_hotkey` | string | `"Alt+Shift+C"` | 热键组合（`Ctrl`/`Alt`/`Shift`/`Win` + 字母或数字） |
+| `tray_icon_show_memory_usage` | bool | `false` | **预留**：托盘图标显示内存占用（尚未实现） |
+| `tray_icon_use_transparent_background` | bool | `false` | **预留**：托盘图标透明背景（尚未实现） |
+| `tray_icon_warning_level` | u8 | `80` | **预留**：警告阈值（%）（尚未实现） |
+| `tray_icon_danger_level` | u8 | `90` | **预留**：危险阈值（%）（尚未实现） |
+| `auto_optimization_interval` | u32 | `0` | **预留**：定时自动清理间隔（秒，0 = 禁用） |
+| `auto_optimization_memory_usage` | u32 | `0` | **预留**：内存占用阈值触发清理（%，0 = 禁用） |
 
 ## 技术栈
 
@@ -118,51 +132,46 @@ cargo run --release
 | [Rust](https://www.rust-lang.org/) 1.96+ | 语言与运行时 |
 | [GPUI](https://gpui.rs)（Zed 源码） | GPU 加速 UI 框架 |
 | [gpui-component](https://longbridge.github.io/gpui-component/zh-CN/docs/components/) | UI 组件（Button、Checkbox、Switch、GroupBox、ProgressCircle 等） |
-| [windows-rs](https://github.com/microsoft/windows-rs) 0.62 | Win32 API（内存管理、权限、窗口控制） |
+| [windows-rs](https://github.com/microsoft/windows-rs) 0.62 | Win32 API（内存管理、权限、窗口控制、Toast、RegisterHotKey） |
 | [tray-icon](https://crates.io/crates/tray-icon) | 系统托盘图标与菜单 |
 | [smol](https://crates.io/crates/smol) | 异步定时与阻塞任务卸载 |
 | [rust-i18n](https://crates.io/crates/rust-i18n) | 界面国际化（`locales/zh-CN.yml`） |
+| [image](https://crates.io/crates/image) | 托盘 PNG 解码与缩放 |
 
 ## 项目结构
 
 ```
 assets/                  # 界面截图（Win10 / Win11 对比，1–4 序号一致）
-├── Win10_1.png          # 折叠
-├── Win10_2.png          # 窗口行为对话框
-├── Win10_3.png          # 展开
-├── Win10_4.png          # 窗口行为（展开背景）
-├── Win11_1.png
-├── Win11_2.png
-├── Win11_3.png
-└── Win11_4.png
-
 locales/
 └── zh-CN.yml            # 中英文 UI 文案（rust-i18n _version: 2 格式）
 
 src/
-├── main.rs              # 入口：UAC 提权、单实例检查、locale 初始化、托盘安装、GPUI 窗口初始化
-├── app.rs               # 应用状态、内存轮询、优化流程、托盘事件、语言切换
+├── main.rs              # 入口：UAC、单实例、通知初始化、托盘/热键、GPUI 启动
+├── app.rs               # 应用状态、内存轮询、优化流程、窗口隐藏/恢复、热键录制
+├── icon_cache.rs        # Explorer 图标缓存清理
 ├── locale.rs            # locale 应用、列表分隔符、系统语言映射
 ├── log.rs               # 调试日志写入 App.log，按行内时间戳清理过期记录
 ├── memory.rs            # 内存查询（GlobalMemoryStatusEx）
+├── messages.rs          # 清理结果文案组装
 ├── optimize.rs          # 8 种清理区域与 NtSetSystemInformation 调用
 ├── privileges.rs        # Windows 特权提升
 ├── settings.rs          # TOML 配置读写
-├── tray.rs              # 系统托盘图标与右键菜单
+├── tray.rs              # 系统托盘图标、Tooltip、菜单、命令分发
 ├── version.rs           # 版本常量
 ├── win32/               # Windows API 封装
-│   ├── mod.rs
+│   ├── hotkey.rs        # RegisterHotKey 全局热键（独立消息循环线程）
+│   ├── notification.rs  # Windows Toast 与开始菜单快捷方式
 │   ├── nt.rs            # NtSetSystemInformation 等 NT 原语
-│   ├── os.rs            # RtlGetVersion 检测 Win10/Win11、GetUserDefaultUILanguage 系统语言
-│   ├── single_instance.rs  # 单实例互斥量
-│   └── window.rs        # 窗口置顶、隐藏到托盘等
-└── ui/                  # UI 组件
-    ├── mod.rs
-    ├── layout.rs        # 窗口尺寸与间距常量
-    ├── memory_card.rs   # 内存环形图卡片
-    ├── settings_page.rs # 清理区域面板、窗口行为对话框、清理按钮
-    ├── theme.rs         # 主题初始化与 Win10 直角适配
-    └── title_bar.rs     # 自定义标题栏
+│   ├── os.rs            # RtlGetVersion、GetUserDefaultUILanguage
+│   ├── process.rs       # 进程枚举/结束（Explorer 重启）
+│   ├── single_instance.rs
+│   └── window.rs        # 窗口置顶、隐藏到托盘
+└── ui/                  # GPUI UI 组件
+    ├── layout.rs
+    ├── memory_card.rs
+    ├── settings_page.rs # 清理区域、窗口行为对话框、热键录制
+    ├── theme.rs
+    └── title_bar.rs
 ```
 
 ## 常见问题
@@ -175,6 +184,9 @@ src/
 
 Windows 会按需将常用页面重新加载到内存。清理后短期内可能因缓存重建而略有延迟，但不会造成长期影响；在内存紧张时，主动清理可释放更多可用内存。
 
+**全局热键不生效怎么办？**
+
+检查窗口行为对话框中是否启用了热键，以及组合键是否与其他软件冲突。热键通过 `RegisterHotKey` 注册，需要至少一个修饰键（Ctrl/Alt/Shift/Win）加一个字母或数字。
 
 **如何查看日志？**
 
