@@ -223,27 +223,6 @@ pub fn render_title_bar(
             .border_b_1()
             .border_color(title_bar_border)
             .bg(title_bar_bg)
-            .on_mouse_down_out(window.listener_for(&state, |state, _, _, _| {
-                state.should_move = false;
-            }))
-            .on_mouse_down(
-                MouseButton::Left,
-                window.listener_for(&state, |state, _, _, _| {
-                    state.should_move = true;
-                }),
-            )
-            .on_mouse_up(
-                MouseButton::Left,
-                window.listener_for(&state, |state, _, _, _| {
-                    state.should_move = false;
-                }),
-            )
-            .on_mouse_move(window.listener_for(&state, |state, _, window, _| {
-                if state.should_move {
-                    state.should_move = false;
-                    window.start_window_move();
-                }
-            }))
             .child(
                 h_flex()
                     .id("bar")
@@ -252,6 +231,27 @@ pub fn render_title_bar(
                     .flex_shrink_0()
                     .flex_1()
                     .window_control_area(WindowControlArea::Drag)
+                    .on_mouse_down_out(window.listener_for(&state, |state, _, _, _| {
+                        state.should_move = false;
+                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        window.listener_for(&state, |state, _, _, _| {
+                            state.should_move = true;
+                        }),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        window.listener_for(&state, |state, _, _, _| {
+                            state.should_move = false;
+                        }),
+                    )
+                    .on_mouse_move(window.listener_for(&state, |state, _, window, _| {
+                        if state.should_move {
+                            state.should_move = false;
+                            window.start_window_move();
+                        }
+                    }))
                     .child(
                         h_flex()
                             .h_full()

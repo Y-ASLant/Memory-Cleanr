@@ -1,11 +1,13 @@
 use rust_i18n::t;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
 use gpui::*;
 use gpui_component::ActiveTheme;
-use gpui_component::WindowExt;
+use gpui_component::{Root, TitleBar, WindowExt};
 use smol::Timer;
 
 use crate::locale;
@@ -40,6 +42,37 @@ pub fn window_min_size() -> Size<Pixels> {
         px(WINDOW_MIN_WIDTH),
         px(crate::ui::layout::collapsed_window_height(CONTENT_PADDING)),
     )
+}
+
+pub fn window_options(expanded: bool, cx: &App) -> WindowOptions {
+    WindowOptions {
+        titlebar: Some(TitleBar::title_bar_options()),
+        window_bounds: Some(WindowBounds::centered(window_size(expanded), cx)),
+        is_resizable: false,
+        window_min_size: Some(window_min_size()),
+        ..Default::default()
+    }
+}
+
+pub struct AppEntityHolder(pub Entity<MemoryCleanerApp>);
+impl Global for AppEntityHolder {}
+
+pub fn open_main_window(
+    cx: &mut AsyncApp,
+    settings: Settings,
+    tray_rx: std::sync::mpsc::Receiver<TrayCommand>,
+) -> Result<()> {
+    let options = cx.update(|app| window_options(false, app));
+    cx.open_window(options, |window, cx| {
+        window.set_window_title(crate::version::APP_NAME);
+
+        let app_entity = cx.new(|cx| MemoryCleanerApp::new(window, cx, settings, tray_rx));
+        let _ = win32::window::remove_maximize_button(window);
+        crate::ui::theme::init_light_theme(window, cx);
+        window.activate_window();
+        cx.new(|cx| Root::new(app_entity, window, cx))
+    })?;
+    Ok(())
 }
 
 fn query_sections(show_virtual: bool) -> Result<(MemorySection, Option<MemorySection>)> {
@@ -77,11 +110,13 @@ fn query_sections(show_virtual: bool) -> Result<(MemorySection, Option<MemorySec
 }
 
 pub struct MemoryCleanerApp {
-    pub window: AnyWindowHandle,
+    pub window: Option<AnyWindowHandle>,
     pub settings: Settings,
     pub physical: MemorySection,
     pub virtual_mem: Option<MemorySection>,
     settings_save_gen: u32,
+    memory_refresh_generation: Arc<AtomicU32>,
+    window_opening: bool,
     pub is_optimizing: bool,
     pub is_refreshing_icon_cache: bool,
     pub optimize_step: String,
@@ -90,6 +125,7 @@ pub struct MemoryCleanerApp {
     pub optimize_has_errors: bool,
     pub icon_cache_status: String,
     pub settings_expanded: bool,
+    window_shown: bool,
 }
 
 impl MemoryCleanerApp {
@@ -119,34 +155,15 @@ impl MemoryCleanerApp {
                 },
             )
         });
-        let window_handle = window.window_handle();
 
-        let weak = cx.weak_entity();
-        window.on_window_should_close(cx, move |window, app| {
-            weak.update(app, |this, cx| {
-                if this.settings.close_to_notification_area {
-                    this.settings.save();
-                    let _ = win32::window::hide_to_tray(window);
-                    this.sync_tray(cx);
-                    false
-                } else {
-                    this.settings.save();
-                    true
-                }
-            })
-            .unwrap_or(true)
-        });
-
-        if settings.always_on_top {
-            let _ = win32::window::set_always_on_top(window, true);
-        }
-
-        let app = Self {
-            window: window_handle,
+        let mut app = Self {
+            window: None,
             settings,
             physical,
             virtual_mem,
             settings_save_gen: 0,
+            memory_refresh_generation: Arc::new(AtomicU32::new(0)),
+            window_opening: false,
             is_optimizing: false,
             is_refreshing_icon_cache: false,
             optimize_step: String::new(),
@@ -155,28 +172,122 @@ impl MemoryCleanerApp {
             optimize_has_errors: false,
             icon_cache_status: String::new(),
             settings_expanded: false,
+            window_shown: true,
         };
 
+        cx.set_global(AppEntityHolder(cx.entity()));
+        app.attach_window(window, cx);
         app.start_background_tasks(cx, tray_rx);
-        app.sync_tray(cx);
+        app.sync_tray();
 
         app
     }
 
-    fn window_visible(&self, cx: &mut Context<Self>) -> bool {
-        self.window
-            .update(cx, |_, window, _| win32::window::is_visible(window))
-            .flatten()
-            .unwrap_or(true)
+    fn attach_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.window = Some(window.window_handle());
+
+        let weak = cx.weak_entity();
+        window.on_window_should_close(cx, move |window, gpui_app| {
+            crate::log_msg("[close] on_window_should_close");
+            let should_close = weak
+                .update(gpui_app, |this, cx| {
+                    this.request_close("should_close", window, cx)
+                })
+                .unwrap_or(true);
+
+            if should_close {
+                gpui_app.quit();
+            }
+            should_close
+        });
+
+        if self.settings.always_on_top {
+            let _ = win32::window::set_always_on_top(window, true);
+        }
+
+        self.start_memory_refresh(cx);
     }
 
-    pub(crate) fn sync_tray(&self, cx: &mut Context<Self>) {
+    fn pause_memory_refresh(&self) {
+        self.memory_refresh_generation
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn start_memory_refresh(&self, cx: &mut Context<Self>) {
+        if self.window.is_none() {
+            return;
+        }
+
+        let generation = self.memory_refresh_generation.load(Ordering::Relaxed);
+        let gen_arc = Arc::clone(&self.memory_refresh_generation);
+        cx.spawn(async move |this, cx| {
+            loop {
+                Timer::after(MEMORY_REFRESH_INTERVAL).await;
+                if gen_arc.load(Ordering::Relaxed) != generation {
+                    break;
+                }
+                let Ok(()) = this.update(cx, |app, cx| {
+                    if app.window.is_none() || !app.window_shown {
+                        return;
+                    }
+                    if app.refresh_memory() {
+                        cx.notify();
+                        app.sync_tray();
+                    }
+                }) else {
+                    break;
+                };
+            }
+        })
+        .detach();
+    }
+
+    fn open_window(&mut self, cx: &mut Context<Self>) {
+        if self.window.is_some() || self.window_opening {
+            return;
+        }
+
+        self.window_opening = true;
+        let expanded = self.settings_expanded;
+        cx.spawn(async move |this, cx| {
+            let entity = match this.upgrade() {
+                Some(entity) => entity,
+                None => return,
+            };
+
+            let options = cx.update(|app| window_options(expanded, app));
+            let opened = cx.open_window(options, |window, cx| {
+                entity.update(cx, |app, cx| {
+                    app.attach_window(window, cx);
+                    app.window_opening = false;
+                });
+                window.set_window_title(crate::version::APP_NAME);
+                let _ = win32::window::remove_maximize_button(window);
+                crate::ui::theme::init_light_theme(window, cx);
+                window.activate_window();
+                cx.new(|cx| Root::new(entity.clone(), window, cx))
+            });
+
+            if opened.is_err() {
+                entity.update(cx, |app, _| app.window_opening = false);
+            } else {
+                entity.update(cx, |app, _| app.sync_tray());
+            }
+        })
+        .detach();
+    }
+
+    fn window_visible(&self) -> bool {
+        self.window.is_some() && self.window_shown
+    }
+
+    pub(crate) fn sync_tray(&self) {
         let virtual_mem = if self.settings.show_virtual_memory {
             self.virtual_mem.as_ref()
         } else {
             None
         };
-        crate::tray::sync_display(&self.physical, virtual_mem, self.window_visible(cx));
+        crate::tray::sync_display(&self.physical, virtual_mem, self.window_visible());
     }
 
     fn set_unavailable_sections(&mut self, show_virtual: bool) {
@@ -203,49 +314,98 @@ impl MemoryCleanerApp {
         .detach();
     }
 
-    pub fn refresh_memory(&mut self, _cx: &mut Context<Self>) -> bool {
+    pub fn refresh_memory(&mut self) -> bool {
         let show_virtual = self.settings.show_virtual_memory;
         let Ok((physical, virtual_mem)) = query_sections(show_virtual) else {
-            let degraded = if self.physical.is_unavailable()
+            if self.physical.is_unavailable()
                 && self.virtual_mem.as_ref().is_none_or(|v| v.is_unavailable())
             {
-                false
-            } else {
-                self.set_unavailable_sections(show_virtual);
-                true
-            };
-            return degraded;
+                return false;
+            }
+            self.set_unavailable_sections(show_virtual);
+            return true;
         };
-        let phys_changed = self.physical != physical;
-        let virt_changed = self.virtual_mem != virtual_mem;
 
-        if phys_changed {
+        let changed = self.physical != physical || self.virtual_mem != virtual_mem;
+        if changed {
             self.physical = physical;
-        }
-        if virt_changed {
             self.virtual_mem = virtual_mem;
         }
+        changed
+    }
 
-        if !(phys_changed || virt_changed) {
-            return false;
+    pub fn activate_window(&mut self, cx: &mut Context<Self>) {
+        if let Some(handle) = self.window {
+            let shown = handle.update(cx, |_, window, _| -> Result<()> {
+                crate::log_msg("[window] activate_window");
+                win32::window::show_from_tray(window)?;
+                window.activate_window();
+                Ok(())
+            });
+            match shown {
+                Ok(Ok(())) => {
+                    self.window_shown = true;
+                    self.start_memory_refresh(cx);
+                    self.sync_tray();
+                    return;
+                }
+                Ok(Err(e)) => {
+                    crate::log_msg(&format!("[window] show_from_tray failed: {e:#}"));
+                }
+                Err(_) => {
+                    crate::log_msg("[window] activate_window handle update failed");
+                }
+            }
+            self.window = None;
         }
-
-        true
+        self.open_window(cx);
     }
 
-    pub fn activate_window(&self, cx: &mut Context<Self>) {
-        let _ = self.window.update(cx, |_, window, _| {
-            let _ = win32::window::show_from_tray(window);
-            window.activate_window();
-        });
-        self.sync_tray(cx);
+    /// Handle a close request. Returns `true` when the app should quit entirely.
+    pub fn request_close(
+        &mut self,
+        source: &str,
+        window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> bool {
+        crate::log_msg(&format!(
+            "[close] request_close source={source} close_to_tray={}",
+            self.settings.close_to_notification_area
+        ));
+        self.settings.save();
+        if self.settings.close_to_notification_area {
+            match win32::window::hide_to_tray(window) {
+                Ok(()) => {
+                    crate::log_msg("[close] hide_to_tray ok");
+                    self.window_shown = false;
+                    self.pause_memory_refresh();
+                    self.sync_tray();
+                }
+                Err(e) => crate::log_msg(&format!("[close] hide_to_tray failed: {e:#}")),
+            }
+            false
+        } else {
+            true
+        }
     }
 
-    pub fn hide_to_tray(&self, cx: &mut Context<Self>) {
-        let _ = self.window.update(cx, |_, window, _| {
-            let _ = win32::window::hide_to_tray(window);
-        });
-        self.sync_tray(cx);
+    pub fn hide_to_tray(&mut self, cx: &mut Context<Self>) {
+        crate::log_msg("[close] hide_to_tray begin");
+        self.pause_memory_refresh();
+        if let Some(handle) = self.window {
+            let hidden = handle.update(cx, |_, window, _| win32::window::hide_to_tray(window));
+            match hidden {
+                Ok(Ok(())) => {
+                    self.window_shown = false;
+                    crate::log_msg("[close] hide_to_tray ok");
+                }
+                Ok(Err(e)) => crate::log_msg(&format!("[close] hide_to_tray failed: {e:#}")),
+                Err(_) => crate::log_msg("[close] hide_to_tray handle update failed"),
+            }
+        } else {
+            crate::log_msg("[close] hide_to_tray no window handle");
+        }
+        self.sync_tray();
     }
 
     pub fn apply_locale(&mut self, cx: &mut Context<Self>) {
@@ -265,7 +425,7 @@ impl MemoryCleanerApp {
         if !self.is_refreshing_icon_cache {
             self.icon_cache_status.clear();
         }
-        self.sync_tray(cx);
+        self.sync_tray();
         self.queue_settings_save(cx);
         cx.notify();
     }
@@ -366,7 +526,7 @@ impl MemoryCleanerApp {
         match action {
             "optimize" => self.run_optimize(cx),
             "toggle_window" => {
-                if self.window_visible(cx) {
+                if self.window_visible() {
                     self.hide_to_tray(cx);
                 } else {
                     self.activate_window(cx);
@@ -407,25 +567,6 @@ impl MemoryCleanerApp {
                 {
                     break;
                 }
-            }
-        })
-        .detach();
-
-        // 周期性内存刷新（仅窗口可见时）
-        cx.spawn(async move |this, cx| {
-            loop {
-                Timer::after(MEMORY_REFRESH_INTERVAL).await;
-                let Ok(()) = this.update(cx, |app, cx| {
-                    if !app.window_visible(cx) {
-                        return;
-                    }
-                    if app.refresh_memory(cx) {
-                        cx.notify();
-                        app.sync_tray(cx);
-                    }
-                }) else {
-                    break;
-                };
             }
         })
         .detach();
@@ -534,16 +675,14 @@ impl MemoryCleanerApp {
         }
 
         let areas = self.settings.memory_areas();
-        let Ok(steps) = optimize::step_plan(areas) else {
-            self.optimize_status = t!("tooltip.select_areas").to_string();
-            cx.notify();
-            return;
+        let steps = match optimize::step_plan(areas) {
+            Ok(s) if !s.is_empty() => s,
+            _ => {
+                self.optimize_status = t!("tooltip.select_areas").to_string();
+                cx.notify();
+                return;
+            }
         };
-        if steps.is_empty() {
-            self.optimize_status = t!("tooltip.select_areas").to_string();
-            cx.notify();
-            return;
-        }
 
         let avail_before = self.physical.avail;
         let total = steps.len();
@@ -574,7 +713,7 @@ impl MemoryCleanerApp {
             }
 
             let _ = this.update(cx, |app, cx| {
-                let _ = app.refresh_memory(cx);
+                let _ = app.refresh_memory();
                 let avail_after = app.physical.avail;
                 let freed_detail = format_freed_message(avail_before, avail_after);
                 app.optimize_step.clear();

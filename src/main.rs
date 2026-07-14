@@ -1,10 +1,13 @@
 #![windows_subsystem = "windows"]
 
 use gpui::{actions, *};
-use gpui_component::{Root, TitleBar};
 
 use memory_cleanr::{
-    app, locale, log_msg, settings::Settings, tray::Tray, ui, version::APP_NAME, win32,
+    app::{self, AppEntityHolder},
+    locale, log_msg,
+    settings::Settings,
+    tray::Tray,
+    win32,
 };
 
 actions!(wmc_gpui, [Quit]);
@@ -103,40 +106,26 @@ fn main() {
         rx
     });
 
-    let app = gpui_platform::application().with_assets(gpui_component_assets::Assets);
+    let app = gpui_platform::application()
+        .with_assets(gpui_component_assets::Assets)
+        .with_quit_mode(QuitMode::Explicit);
 
     app.run(move |cx| {
         gpui_component::init(cx);
 
         cx.bind_keys([KeyBinding::new("alt-f4", Quit, None)]);
-
-        let window_options = WindowOptions {
-            titlebar: Some(TitleBar::title_bar_options()),
-            window_bounds: Some(WindowBounds::centered(app::window_size(false), cx)),
-            is_resizable: false,
-            window_min_size: Some(app::window_min_size()),
-            ..Default::default()
-        };
+        cx.on_action(|_: &Quit, cx: &mut App| {
+            let entity = cx
+                .try_global::<AppEntityHolder>()
+                .map(|holder| holder.0.clone());
+            if let Some(entity) = entity {
+                entity.update(cx, |app, _| app.settings.save());
+            }
+            cx.quit();
+        });
 
         cx.spawn(async move |cx| {
-            cx.open_window(window_options, |window, cx| {
-                window.set_window_title(APP_NAME);
-
-                let app_entity = cx.new(|cx| {
-                    let view = app::MemoryCleanerApp::new(window, cx, settings, tray_rx);
-                    window.activate_window();
-                    view
-                });
-                let weak = app_entity.downgrade();
-                cx.on_action(move |_: &Quit, cx: &mut App| {
-                    let _ = weak.update(cx, |app, _| app.settings.save());
-                    cx.quit();
-                });
-                let _ = win32::window::remove_maximize_button(window);
-                ui::theme::init_light_theme(window, cx);
-                cx.new(|cx| Root::new(app_entity, window, cx))
-            })
-            .expect("Failed to open window");
+            app::open_main_window(cx, settings, tray_rx).expect("Failed to open window");
         })
         .detach();
     });

@@ -12,7 +12,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 fn show_window(hwnd: HWND, cmd: SHOW_WINDOW_CMD) -> Result<()> {
     unsafe {
         // ShowWindow returns the previous visibility state, not success/failure.
-        // It rarely fails, so we ignore the return value.
         let _ = ShowWindow(hwnd, cmd);
     }
     Ok(())
@@ -55,9 +54,7 @@ pub fn hide_to_tray(window: &Window) -> Result<()> {
     Ok(())
 }
 
-/// Restore the window from tray-only hidden state. If the window was minimized
-/// before being hidden, `SW_RESTORE` brings it back to its previous size/position
-/// rather than leaving it minimized.
+/// Restore the window from tray-only hidden state.
 pub fn show_from_tray(window: &Window) -> Result<()> {
     let hwnd = hwnd_from_window(window)?;
     apply_extended_style(hwnd, |style| {

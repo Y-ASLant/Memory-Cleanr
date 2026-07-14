@@ -183,8 +183,8 @@ pub fn dispatch_command(
     match command {
         TrayCommand::ActivateWindow => app.activate_window(cx),
         TrayCommand::RefreshTooltip => {
-            app.refresh_memory(cx);
-            app.sync_tray(cx);
+            app.refresh_memory();
+            app.sync_tray();
         }
         TrayCommand::MenuAction(action) => app.handle_tray_action(&action, cx),
     }
