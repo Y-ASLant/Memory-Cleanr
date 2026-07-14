@@ -100,6 +100,10 @@ fn main() {
     let settings = Settings::load();
     locale::apply(&settings);
 
+    if let Err(e) = win32::notification::init() {
+        log_msg(&format!("[notification] init failed: {e:#}"));
+    }
+
     let tray_rx = Tray::install().unwrap_or_else(|e| {
         log_msg(&format!("Failed to install tray icon: {e}"));
         let (_tx, rx) = std::sync::mpsc::channel();

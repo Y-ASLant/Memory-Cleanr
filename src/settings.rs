@@ -12,7 +12,7 @@ pub struct Settings {
     // 预留字段：自动优化功能（未实现）
     pub auto_optimization_interval: u32,
     pub auto_optimization_memory_usage: u32,
-    // 预留字段：优化通知（未实现）
+    /// Show a Windows toast when memory cleanup completes.
     pub show_optimization_notifications: bool,
     // 预留字段：托盘图标自定义（未实现）
     pub tray_icon_show_memory_usage: bool,
@@ -161,6 +161,7 @@ mod tests {
         let settings = Settings::default();
         assert!(settings.close_to_notification_area);
         assert!(settings.show_virtual_memory);
+        assert!(settings.show_optimization_notifications);
         assert_eq!(settings.memory_areas, MemoryAreas::DEFAULT.bits());
         assert_eq!(settings.language, "auto");
     }

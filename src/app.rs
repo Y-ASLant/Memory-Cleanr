@@ -505,6 +505,12 @@ impl MemoryCleanerApp {
         cx.notify();
     }
 
+    pub fn set_show_optimization_notifications(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.settings.show_optimization_notifications = enabled;
+        self.queue_settings_save(cx);
+        cx.notify();
+    }
+
     pub fn set_debug_logging(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.settings.debug_logging = enabled;
         crate::log::set_debug_enabled(enabled);
@@ -708,21 +714,39 @@ impl MemoryCleanerApp {
                 }
             }
 
-            let _ = this.update(cx, |app, cx| {
-                let _ = app.refresh_memory();
-                let avail_after = app.physical.avail;
-                let freed_detail = format_freed_message(avail_before, avail_after);
-                app.optimize_step.clear();
-                app.is_optimizing = false;
-                app.optimize_percent = 0.0;
-                let completed_refs: Vec<&str> = completed.iter().map(|s| s.as_str()).collect();
-                let errors_refs: Vec<&str> = errors.iter().map(|s| s.as_str()).collect();
-                app.optimize_has_errors = !errors.is_empty();
-                app.optimize_status =
-                    build_cleanup_result_message(&completed_refs, &errors_refs, &freed_detail);
-                crate::log::write(&format!("[optimize] result: {}", app.optimize_status));
-                cx.notify();
-            });
+            let notification = this
+                .update(cx, |app, cx| {
+                    let _ = app.refresh_memory();
+                    let avail_after = app.physical.avail;
+                    let freed_detail = format_freed_message(avail_before, avail_after);
+                    app.optimize_step.clear();
+                    app.is_optimizing = false;
+                    app.optimize_percent = 0.0;
+                    let completed_refs: Vec<&str> = completed.iter().map(|s| s.as_str()).collect();
+                    let errors_refs: Vec<&str> = errors.iter().map(|s| s.as_str()).collect();
+                    app.optimize_has_errors = !errors.is_empty();
+                    app.optimize_status =
+                        build_cleanup_result_message(&completed_refs, &errors_refs, &freed_detail);
+                    crate::log::write(&format!("[optimize] result: {}", app.optimize_status));
+                    cx.notify();
+                    if app.settings.show_optimization_notifications {
+                        Some((
+                            t!("notification.optimize_title").to_string(),
+                            app.optimize_status.clone(),
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .ok()
+                .flatten();
+
+            if let Some((title, body)) = notification
+                && let Err(e) =
+                    smol::unblock(move || win32::notification::show(&title, &body)).await
+            {
+                crate::log_msg(&format!("[notification] failed: {e:#}"));
+            }
 
             Timer::after(OPTIMIZE_RESULT_DISPLAY).await;
 

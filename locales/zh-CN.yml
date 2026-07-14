@@ -73,6 +73,12 @@ settings.close_to_tray:
 settings.close_to_tray_desc:
   zh-CN: "点击关闭按钮时最小化到系统托盘"
   en: "Minimize to system tray when closing"
+settings.optimization_notifications:
+  zh-CN: "优化后通知"
+  en: "Post-Optimization Notification"
+settings.optimization_notifications_desc:
+  zh-CN: "内存优化完成后显示 Windows 系统通知"
+  en: "Show a Windows notification when memory cleanup completes"
 settings.debug_logging:
   zh-CN: "调试日志"
   en: "Debug Logging"
@@ -136,6 +142,10 @@ cleanup.completed_detail:
 cleanup.partial:
   zh-CN: "完成 %{count} 项，失败：%{errors}"
   en: "%{count} done, failed: %{errors}"
+
+notification.optimize_title:
+  zh-CN: "内存优化完成"
+  en: "Memory Cleanup Complete"
 
 # Icon cache refresh
 icon_cache.confirm_title:

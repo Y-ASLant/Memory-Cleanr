@@ -1,3 +1,4 @@
+pub mod notification;
 pub mod nt;
 pub mod os;
 pub mod process;

@@ -352,6 +352,25 @@ pub fn render_window_behavior_dialog(
         ))
         .child(switch_row_app(
             SwitchRowConfig {
+                id: "dialog-switch-optimization-notifications",
+                icon: IconName::Bell,
+                title: t!("settings.optimization_notifications").to_string(),
+                description: t!("settings.optimization_notifications_desc").to_string(),
+                checked: settings.show_optimization_notifications,
+            },
+            muted,
+            foreground,
+            {
+                let weak = weak.clone();
+                move |checked, _window, cx| {
+                    let _ = weak.update(cx, |app, cx| {
+                        app.set_show_optimization_notifications(*checked, cx);
+                    });
+                }
+            },
+        ))
+        .child(switch_row_app(
+            SwitchRowConfig {
                 id: "dialog-switch-debug-logging",
                 icon: IconName::Settings2,
                 title: t!("settings.debug_logging").to_string(),
