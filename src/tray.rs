@@ -1,7 +1,7 @@
 use rust_i18n::t;
 
 use std::sync::atomic::{AtomicPtr, Ordering};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::Sender;
 
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
@@ -22,12 +22,13 @@ pub struct Tray {
 pub enum TrayCommand {
     ActivateWindow,
     RefreshTooltip,
+    /// Global hotkey (`RegisterHotKey`) triggered memory cleanup.
+    Optimize,
     MenuAction(String),
 }
 
 impl Tray {
-    pub fn install() -> Result<Receiver<TrayCommand>, Box<dyn std::error::Error>> {
-        let (tx, rx) = std::sync::mpsc::channel();
+    pub fn install(tx: Sender<TrayCommand>) -> Result<(), Box<dyn std::error::Error>> {
         install_event_handlers(tx);
 
         let optimize = MenuItem::with_id("optimize", t!("tray.optimize"), true, None);
@@ -56,7 +57,7 @@ impl Tray {
         let leaked = Box::leak(tray);
         TRAY.store(leaked, Ordering::Release);
 
-        Ok(rx)
+        Ok(())
     }
 }
 
@@ -186,6 +187,7 @@ pub fn dispatch_command(
             app.refresh_memory();
             app.sync_tray();
         }
+        TrayCommand::Optimize => app.run_optimize(cx),
         TrayCommand::MenuAction(action) => app.handle_tray_action(&action, cx),
     }
 }

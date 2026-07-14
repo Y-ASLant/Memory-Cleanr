@@ -372,6 +372,29 @@ pub fn render_window_behavior_dialog(
         ))
         .child(switch_row_app(
             SwitchRowConfig {
+                id: "dialog-switch-cleanup-hotkey",
+                icon: IconName::ALargeSmall,
+                title: t!("settings.cleanup_hotkey").to_string(),
+                description: t!(
+                    "settings.cleanup_hotkey_desc",
+                    shortcut = settings.cleanup_hotkey
+                )
+                .to_string(),
+                checked: settings.cleanup_hotkey_enabled,
+            },
+            muted,
+            foreground,
+            {
+                let weak = weak.clone();
+                move |checked, _window, cx| {
+                    let _ = weak.update(cx, |app, cx| {
+                        app.set_cleanup_hotkey_enabled(*checked, cx);
+                    });
+                }
+            },
+        ))
+        .child(switch_row_app(
+            SwitchRowConfig {
                 id: "dialog-switch-debug-logging",
                 icon: IconName::Settings2,
                 title: t!("settings.debug_logging").to_string(),

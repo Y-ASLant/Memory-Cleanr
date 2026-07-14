@@ -23,6 +23,10 @@ pub struct Settings {
     pub language: String,
     /// Write debug output to `App.log` next to the executable.
     pub debug_logging: bool,
+    /// Enable global cleanup hotkey via `RegisterHotKey`.
+    pub cleanup_hotkey_enabled: bool,
+    /// Hotkey chord, e.g. `Alt+Shift+C`. Empty disables registration.
+    pub cleanup_hotkey: String,
 }
 
 impl Default for Settings {
@@ -41,6 +45,8 @@ impl Default for Settings {
             tray_icon_danger_level: 90,
             language: "auto".into(),
             debug_logging: false,
+            cleanup_hotkey_enabled: true,
+            cleanup_hotkey: crate::win32::hotkey::HotkeyBinding::DEFAULT_CLEANUP.into(),
         }
     }
 }
@@ -79,12 +85,22 @@ impl Settings {
         };
         settings.normalize_memory_areas();
         settings.normalize_language();
+        settings.normalize_cleanup_hotkey();
         settings
     }
 
     fn normalize_language(&mut self) {
         if !matches!(self.language.as_str(), "auto" | "zh-CN" | "en") {
             self.language = "auto".into();
+        }
+    }
+
+    fn normalize_cleanup_hotkey(&mut self) {
+        if !self.cleanup_hotkey_enabled {
+            return;
+        }
+        if crate::win32::hotkey::HotkeyBinding::parse(&self.cleanup_hotkey).is_none() {
+            self.cleanup_hotkey = crate::win32::hotkey::HotkeyBinding::DEFAULT_CLEANUP.into();
         }
     }
 
@@ -103,6 +119,7 @@ impl Settings {
         let mut settings: Settings = toml::from_str(content).expect("valid settings toml");
         settings.normalize_memory_areas();
         settings.normalize_language();
+        settings.normalize_cleanup_hotkey();
         settings
     }
 
@@ -164,6 +181,11 @@ mod tests {
         assert!(settings.show_optimization_notifications);
         assert_eq!(settings.memory_areas, MemoryAreas::DEFAULT.bits());
         assert_eq!(settings.language, "auto");
+        assert!(settings.cleanup_hotkey_enabled);
+        assert_eq!(
+            settings.cleanup_hotkey,
+            crate::win32::hotkey::HotkeyBinding::DEFAULT_CLEANUP
+        );
     }
 
     #[test]

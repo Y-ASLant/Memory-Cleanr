@@ -26,19 +26,21 @@ struct TitleBarActionColors {
 
 impl TitleBarActionColors {
     fn from_theme(cx: &App, danger: bool) -> Self {
+        let theme = cx.theme();
+        let foreground = theme.foreground;
         if danger {
             Self {
-                foreground: cx.theme().foreground,
-                hover_fg: cx.theme().danger_foreground,
-                hover_bg: cx.theme().danger,
-                active_bg: cx.theme().danger_active,
+                foreground,
+                hover_fg: theme.danger_foreground,
+                hover_bg: theme.danger,
+                active_bg: theme.danger_active,
             }
         } else {
             Self {
-                foreground: cx.theme().foreground,
-                hover_fg: cx.theme().secondary_foreground,
-                hover_bg: cx.theme().secondary_hover,
-                active_bg: cx.theme().secondary_active,
+                foreground,
+                hover_fg: theme.secondary_foreground,
+                hover_bg: theme.secondary_hover,
+                active_bg: theme.secondary_active,
             }
         }
     }

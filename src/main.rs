@@ -104,11 +104,13 @@ fn main() {
         log_msg(&format!("[notification] init failed: {e:#}"));
     }
 
-    let tray_rx = Tray::install().unwrap_or_else(|e| {
+    let (command_tx, command_rx) = std::sync::mpsc::channel();
+    win32::hotkey::bind_command_sender(command_tx.clone());
+
+    Tray::install(command_tx.clone()).unwrap_or_else(|e| {
         log_msg(&format!("Failed to install tray icon: {e}"));
-        let (_tx, rx) = std::sync::mpsc::channel();
-        rx
     });
+    win32::hotkey::init(&settings);
 
     let app = gpui_platform::application()
         .with_assets(gpui_component_assets::Assets)
@@ -129,7 +131,7 @@ fn main() {
         });
 
         cx.spawn(async move |cx| {
-            app::open_main_window(cx, settings, tray_rx).expect("Failed to open window");
+            app::open_main_window(cx, settings, command_rx).expect("Failed to open window");
         })
         .detach();
     });

@@ -503,6 +503,13 @@ impl MemoryCleanerApp {
         cx.notify();
     }
 
+    pub fn set_cleanup_hotkey_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.settings.cleanup_hotkey_enabled = enabled;
+        win32::hotkey::sync(&self.settings);
+        self.queue_settings_save(cx);
+        cx.notify();
+    }
+
     pub fn set_debug_logging(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.settings.debug_logging = enabled;
         crate::log::set_debug_enabled(enabled);
@@ -680,6 +687,7 @@ impl MemoryCleanerApp {
 
         let avail_before = self.physical.avail;
         let total = steps.len();
+        let notify = self.settings.show_optimization_notifications;
         self.is_optimizing = true;
         self.optimize_step = t!("button.cleanup_preparing").to_string();
         self.optimize_percent = 0.0;
@@ -688,6 +696,16 @@ impl MemoryCleanerApp {
         cx.notify();
 
         cx.spawn(async move |this, cx| {
+            if notify {
+                let title = t!("notification.optimize_start_title").to_string();
+                let body = t!("notification.optimize_start_body").to_string();
+                if let Err(e) =
+                    smol::unblock(move || win32::notification::show(&title, &body)).await
+                {
+                    crate::log_msg(&format!("[notification] start failed: {e:#}"));
+                }
+            }
+
             let mut completed: Vec<String> = Vec::new();
             let mut errors: Vec<String> = Vec::new();
 

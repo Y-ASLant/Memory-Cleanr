@@ -77,14 +77,20 @@ settings.optimization_notifications:
   zh-CN: "优化后通知"
   en: "Post-Optimization Notification"
 settings.optimization_notifications_desc:
-  zh-CN: "内存优化完成后显示 Windows 系统通知"
-  en: "Show a Windows notification when memory cleanup completes"
+  zh-CN: "内存优化开始与完成时显示 Windows 系统通知"
+  en: "Show Windows notifications when memory cleanup starts and completes"
 settings.debug_logging:
   zh-CN: "调试日志"
   en: "Debug Logging"
 settings.debug_logging_desc:
   zh-CN: "将详细运行信息写入程序目录下的 App.log（自动清理 7 天前的记录）"
   en: "Write detailed logs to App.log next to the executable (auto-purges entries older than 7 days)"
+settings.cleanup_hotkey:
+  zh-CN: "全局快捷键"
+  en: "Global Hotkey"
+settings.cleanup_hotkey_desc:
+  zh-CN: "按 %{shortcut} 触发内存清理"
+  en: "Press %{shortcut} to run memory cleanup"
 settings.cleanup_areas:
   zh-CN: "清理区域"
   en: "Cleanup Areas"
@@ -146,6 +152,12 @@ cleanup.partial:
 notification.optimize_title:
   zh-CN: "内存优化完成"
   en: "Memory Cleanup Complete"
+notification.optimize_start_title:
+  zh-CN: "开始内存清理"
+  en: "Memory Cleanup Started"
+notification.optimize_start_body:
+  zh-CN: "正在执行内存优化…"
+  en: "Running memory cleanup…"
 
 # Icon cache refresh
 icon_cache.confirm_title:
