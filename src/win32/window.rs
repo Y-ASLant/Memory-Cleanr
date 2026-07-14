@@ -4,9 +4,9 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
     GWL_EXSTYLE, GWL_STYLE, GetWindowLongPtrW, HWND_NOTOPMOST, HWND_TOPMOST, IsIconic,
-    IsWindowVisible, SHOW_WINDOW_CMD, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_FRAMECHANGED,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX,
+    SHOW_WINDOW_CMD, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos, ShowWindow, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    WS_MAXIMIZEBOX,
 };
 
 fn show_window(hwnd: HWND, cmd: SHOW_WINDOW_CMD) -> Result<()> {
@@ -113,10 +113,4 @@ pub fn remove_maximize_button(window: &Window) -> Result<()> {
         );
     }
     Ok(())
-}
-
-/// Return whether the window is currently visible on screen.
-pub fn is_visible(window: &Window) -> Result<bool> {
-    let hwnd = hwnd_from_window(window)?;
-    Ok(unsafe { IsWindowVisible(hwnd).as_bool() })
 }

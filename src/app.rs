@@ -190,8 +190,8 @@ impl MemoryCleanerApp {
         window.on_window_should_close(cx, move |window, gpui_app| {
             crate::log_msg("[close] on_window_should_close");
             let should_close = weak
-                .update(gpui_app, |this, cx| {
-                    this.request_close("should_close", window, cx)
+                .update(gpui_app, |this, _| {
+                    this.request_close("should_close", window)
                 })
                 .unwrap_or(true);
 
@@ -336,53 +336,51 @@ impl MemoryCleanerApp {
 
     pub fn activate_window(&mut self, cx: &mut Context<Self>) {
         if let Some(handle) = self.window {
-            let shown = handle.update(cx, |_, window, _| -> Result<()> {
+            match handle.update(cx, |_, window, _| -> Result<()> {
                 crate::log_msg("[window] activate_window");
                 win32::window::show_from_tray(window)?;
                 window.activate_window();
                 Ok(())
-            });
-            match shown {
+            }) {
                 Ok(Ok(())) => {
                     self.window_shown = true;
                     self.start_memory_refresh(cx);
                     self.sync_tray();
                     return;
                 }
-                Ok(Err(e)) => {
-                    crate::log_msg(&format!("[window] show_from_tray failed: {e:#}"));
-                }
-                Err(_) => {
-                    crate::log_msg("[window] activate_window handle update failed");
-                }
+                Ok(Err(e)) => crate::log_msg(&format!("[window] show_from_tray failed: {e:#}")),
+                Err(_) => crate::log_msg("[window] activate_window handle update failed"),
             }
             self.window = None;
         }
         self.open_window(cx);
     }
 
+    fn mark_hidden_to_tray(&mut self, source: &str) {
+        crate::log_msg(&format!("[close] hide_to_tray ok source={source}"));
+        self.window_shown = false;
+        self.pause_memory_refresh();
+    }
+
+    fn hide_window_to_tray(&mut self, window: &Window, source: &str) {
+        match win32::window::hide_to_tray(window) {
+            Ok(()) => self.mark_hidden_to_tray(source),
+            Err(e) => crate::log_msg(&format!(
+                "[close] hide_to_tray failed source={source}: {e:#}"
+            )),
+        }
+    }
+
     /// Handle a close request. Returns `true` when the app should quit entirely.
-    pub fn request_close(
-        &mut self,
-        source: &str,
-        window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> bool {
+    pub fn request_close(&mut self, source: &str, window: &mut Window) -> bool {
         crate::log_msg(&format!(
             "[close] request_close source={source} close_to_tray={}",
             self.settings.close_to_notification_area
         ));
         self.settings.save();
         if self.settings.close_to_notification_area {
-            match win32::window::hide_to_tray(window) {
-                Ok(()) => {
-                    crate::log_msg("[close] hide_to_tray ok");
-                    self.window_shown = false;
-                    self.pause_memory_refresh();
-                    self.sync_tray();
-                }
-                Err(e) => crate::log_msg(&format!("[close] hide_to_tray failed: {e:#}")),
-            }
+            self.hide_window_to_tray(window, source);
+            self.sync_tray();
             false
         } else {
             true
@@ -390,16 +388,14 @@ impl MemoryCleanerApp {
     }
 
     pub fn hide_to_tray(&mut self, cx: &mut Context<Self>) {
-        crate::log_msg("[close] hide_to_tray begin");
-        self.pause_memory_refresh();
         if let Some(handle) = self.window {
-            let hidden = handle.update(cx, |_, window, _| win32::window::hide_to_tray(window));
-            match hidden {
-                Ok(Ok(())) => {
-                    self.window_shown = false;
-                    crate::log_msg("[close] hide_to_tray ok");
+            match handle.update(cx, |_, window, _| win32::window::hide_to_tray(window)) {
+                Ok(Ok(())) => self.mark_hidden_to_tray("tray_menu"),
+                Ok(Err(e)) => {
+                    crate::log_msg(&format!(
+                        "[close] hide_to_tray failed source=tray_menu: {e:#}"
+                    ));
                 }
-                Ok(Err(e)) => crate::log_msg(&format!("[close] hide_to_tray failed: {e:#}")),
                 Err(_) => crate::log_msg("[close] hide_to_tray handle update failed"),
             }
         } else {

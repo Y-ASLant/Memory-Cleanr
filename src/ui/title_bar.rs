@@ -24,28 +24,34 @@ struct TitleBarActionColors {
     active_bg: Hsla,
 }
 
+impl TitleBarActionColors {
+    fn from_theme(cx: &App, danger: bool) -> Self {
+        if danger {
+            Self {
+                foreground: cx.theme().foreground,
+                hover_fg: cx.theme().danger_foreground,
+                hover_bg: cx.theme().danger,
+                active_bg: cx.theme().danger_active,
+            }
+        } else {
+            Self {
+                foreground: cx.theme().foreground,
+                hover_fg: cx.theme().secondary_foreground,
+                hover_bg: cx.theme().secondary_hover,
+                active_bg: cx.theme().secondary_active,
+            }
+        }
+    }
+}
+
 fn title_bar_control(
     id: &'static str,
     icon: IconName,
     area: WindowControlArea,
     cx: &App,
-    is_close: bool,
+    danger: bool,
 ) -> impl IntoElement {
-    let hover_fg = if is_close {
-        cx.theme().danger_foreground
-    } else {
-        cx.theme().secondary_foreground
-    };
-    let hover_bg = if is_close {
-        cx.theme().danger
-    } else {
-        cx.theme().secondary_hover
-    };
-    let active_bg = if is_close {
-        cx.theme().danger_active
-    } else {
-        cx.theme().secondary_active
-    };
+    let colors = TitleBarActionColors::from_theme(cx, danger);
 
     div()
         .id(id)
@@ -56,9 +62,9 @@ fn title_bar_control(
         .justify_center()
         .content_center()
         .items_center()
-        .text_color(cx.theme().foreground)
-        .hover(|style| style.bg(hover_bg).text_color(hover_fg))
-        .active(|style| style.bg(active_bg).text_color(hover_fg))
+        .text_color(colors.foreground)
+        .hover(|style| style.bg(colors.hover_bg).text_color(colors.hover_fg))
+        .active(|style| style.bg(colors.active_bg).text_color(colors.hover_fg))
         .window_control_area(area)
         .child(Icon::new(icon).small())
 }
@@ -170,6 +176,49 @@ fn window_settings_control(
     )
 }
 
+fn title_bar_drag_area(
+    window: &mut Window,
+    state: &Entity<TitleBarDragState>,
+    foreground: Hsla,
+) -> impl IntoElement {
+    h_flex()
+        .id("bar")
+        .h_full()
+        .flex_shrink_0()
+        .flex_1()
+        .items_center()
+        .gap_2()
+        .window_control_area(WindowControlArea::Drag)
+        .on_mouse_down_out(window.listener_for(state, |state, _, _, _| {
+            state.should_move = false;
+        }))
+        .on_mouse_down(
+            MouseButton::Left,
+            window.listener_for(state, |state, _, _, _| {
+                state.should_move = true;
+            }),
+        )
+        .on_mouse_up(
+            MouseButton::Left,
+            window.listener_for(state, |state, _, _, _| {
+                state.should_move = false;
+            }),
+        )
+        .on_mouse_move(window.listener_for(state, |state, _, window, _| {
+            if state.should_move {
+                state.should_move = false;
+                window.start_window_move();
+            }
+        }))
+        .child(Icon::new(IconName::MemoryStick).small())
+        .child(
+            Label::new(APP_NAME)
+                .text_sm()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(foreground),
+        )
+}
+
 fn window_controls(cx: &App) -> impl IntoElement {
     h_flex()
         .id("window-controls")
@@ -200,16 +249,7 @@ pub fn render_title_bar(
     let state = window.use_state(cx, |_, _| TitleBarDragState { should_move: false });
     let title_bar_border = cx.theme().title_bar_border;
     let title_bar_bg = cx.theme().title_bar;
-    let foreground = cx.theme().foreground;
-    let hover_fg = cx.theme().secondary_foreground;
-    let hover_bg = cx.theme().secondary_hover;
-    let active_bg = cx.theme().secondary_active;
-    let action_colors = TitleBarActionColors {
-        foreground,
-        hover_fg,
-        hover_bg,
-        active_bg,
-    };
+    let action_colors = TitleBarActionColors::from_theme(cx, false);
 
     div().flex_shrink_0().child(
         div()
@@ -223,49 +263,11 @@ pub fn render_title_bar(
             .border_b_1()
             .border_color(title_bar_border)
             .bg(title_bar_bg)
-            .child(
-                h_flex()
-                    .id("bar")
-                    .h_full()
-                    .justify_between()
-                    .flex_shrink_0()
-                    .flex_1()
-                    .window_control_area(WindowControlArea::Drag)
-                    .on_mouse_down_out(window.listener_for(&state, |state, _, _, _| {
-                        state.should_move = false;
-                    }))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        window.listener_for(&state, |state, _, _, _| {
-                            state.should_move = true;
-                        }),
-                    )
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        window.listener_for(&state, |state, _, _, _| {
-                            state.should_move = false;
-                        }),
-                    )
-                    .on_mouse_move(window.listener_for(&state, |state, _, window, _| {
-                        if state.should_move {
-                            state.should_move = false;
-                            window.start_window_move();
-                        }
-                    }))
-                    .child(
-                        h_flex()
-                            .h_full()
-                            .items_center()
-                            .gap_2()
-                            .child(Icon::new(IconName::MemoryStick).small())
-                            .child(
-                                Label::new(APP_NAME)
-                                    .text_sm()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(foreground),
-                            ),
-                    ),
-            )
+            .child(title_bar_drag_area(
+                window,
+                &state,
+                action_colors.foreground,
+            ))
             .child({
                 let mut actions = h_flex()
                     .items_center()
