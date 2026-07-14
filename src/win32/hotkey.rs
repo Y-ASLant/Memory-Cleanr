@@ -35,7 +35,7 @@ pub struct HotkeyBinding {
 }
 
 impl HotkeyBinding {
-    pub const DEFAULT_CLEANUP: &'static str = "Alt+Shift+C";
+    pub const DEFAULT_CLEANUP: &'static str = "Ctrl+Alt+C";
 
     pub fn parse(chord: &str) -> Option<Self> {
         let chord = chord.trim();
@@ -75,7 +75,7 @@ impl HotkeyBinding {
         })
     }
 
-    /// Build a settings chord such as `Alt+Shift+C` from modifier flags and a key token.
+    /// Build a settings chord such as `Ctrl+Alt+C` from modifier flags and a key token.
     pub fn format_chord(
         control: bool,
         alt: bool,
@@ -109,7 +109,7 @@ impl HotkeyBinding {
         Self::parse(&chord).map(|_| chord)
     }
 
-    /// Convert a settings chord such as `Alt+Shift+C` into a GPUI `Keystroke` for `Kbd` display.
+    /// Convert a settings chord such as `Ctrl+Alt+C` into a GPUI `Keystroke` for `Kbd` display.
     pub fn chord_to_keystroke(chord: &str) -> Option<Keystroke> {
         let chord = chord.trim();
         if chord.is_empty() {
@@ -430,8 +430,8 @@ mod tests {
 
     #[test]
     fn parse_default_cleanup_hotkey() {
-        let binding = HotkeyBinding::parse("Alt+Shift+C").expect("valid chord");
-        assert_eq!(binding.modifiers, MOD_ALT | MOD_SHIFT | MOD_NOREPEAT);
+        let binding = HotkeyBinding::parse("Ctrl+Alt+C").expect("valid chord");
+        assert_eq!(binding.modifiers, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT);
         assert_eq!(binding.virtual_key, VIRTUAL_KEY(b'C' as u16));
     }
 

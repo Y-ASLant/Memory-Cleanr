@@ -25,7 +25,7 @@ pub struct Settings {
     pub debug_logging: bool,
     /// Enable global cleanup hotkey via `RegisterHotKey`.
     pub cleanup_hotkey_enabled: bool,
-    /// Hotkey chord, e.g. `Alt+Shift+C`. Empty disables registration.
+    /// Hotkey chord, e.g. `Ctrl+Alt+C`. Empty disables registration.
     pub cleanup_hotkey: String,
 }
 
