@@ -1,15 +1,25 @@
 use rust_i18n::t;
 
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::OnceLock;
+use std::thread;
+use std::time::Duration;
 
+use image::{RgbaImage, imageops};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::app::MemoryCleanerApp;
 use crate::memory::MemorySection;
 
+/// Delay between 90° rotation steps while optimizing.
+const SPIN_STEP_MS: u64 = 120;
+
 static TRAY: AtomicPtr<Tray> = AtomicPtr::new(std::ptr::null_mut());
+static ICON_SOURCE: OnceLock<RgbaImage> = OnceLock::new();
+static SPIN_GENERATION: AtomicU32 = AtomicU32::new(0);
+static SPIN_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 pub struct Tray {
     icon: TrayIcon,
@@ -40,12 +50,15 @@ impl Tray {
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&quit)?;
 
-        let icon = load_app_icon().unwrap_or_else(|_| create_fallback_icon());
+        let source = load_icon_source();
+        let (width, height) = source.dimensions();
+        let _ = ICON_SOURCE.set(source.clone());
+
         let tray_icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(false)
             .with_tooltip(t!("tray.tooltip", percent = "—"))
-            .with_icon(icon)
+            .with_icon(icon_from_rgba(source.into_raw(), width, height))
             .build()?;
 
         let tray = Box::new(Self {
@@ -69,6 +82,74 @@ fn tray() -> Option<&'static Tray> {
         // SAFETY: `TRAY` is set once during install and the value is leaked for process lifetime.
         Some(unsafe { &*ptr })
     }
+}
+
+fn icon_from_rgba(rgba: Vec<u8>, width: u32, height: u32) -> Icon {
+    Icon::from_rgba(rgba, width, height).unwrap_or_else(|_| {
+        Icon::from_rgba(vec![0, 0, 0, 0], 1, 1).unwrap_or_else(|_| {
+            panic!("tray_icon::Icon::from_rgba rejected a 1x1 transparent buffer")
+        })
+    })
+}
+
+/// Rotate a square tray icon by quarter turns (0–3). Avoids alpha tricks on Windows.
+pub(crate) fn rotate_quarters(source: &RgbaImage, quarters: u32) -> RgbaImage {
+    match quarters % 4 {
+        0 => source.clone(),
+        1 => imageops::rotate90(source),
+        2 => imageops::rotate180(source),
+        3 => imageops::rotate270(source),
+        _ => unreachable!(),
+    }
+}
+
+fn icon_at_rotation(quarters: u32) -> Icon {
+    let Some(source) = ICON_SOURCE.get() else {
+        return create_fallback_icon();
+    };
+    let rotated = rotate_quarters(source, quarters);
+    let (width, height) = rotated.dimensions();
+    icon_from_rgba(rotated.into_raw(), width, height)
+}
+
+fn set_tray_icon_rotation(quarters: u32) {
+    let Some(tray) = tray() else {
+        return;
+    };
+    let _ = tray.icon.set_icon(Some(icon_at_rotation(quarters)));
+}
+
+pub fn stop_spin() {
+    SPIN_GENERATION.fetch_add(1, Ordering::Relaxed);
+    SPIN_ACTIVE.store(false, Ordering::Relaxed);
+    set_tray_icon_rotation(0);
+}
+
+pub fn start_spin() {
+    if SPIN_ACTIVE.swap(true, Ordering::Relaxed) {
+        return;
+    }
+
+    let generation = SPIN_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+
+    thread::Builder::new()
+        .name("tray-icon-spin".into())
+        .spawn(move || {
+            let mut quarters = 0u32;
+            loop {
+                if SPIN_GENERATION.load(Ordering::Relaxed) != generation {
+                    break;
+                }
+
+                set_tray_icon_rotation(quarters);
+                quarters = quarters.wrapping_add(1);
+
+                thread::sleep(Duration::from_millis(SPIN_STEP_MS));
+            }
+            SPIN_ACTIVE.store(false, Ordering::Relaxed);
+            set_tray_icon_rotation(0);
+        })
+        .ok();
 }
 
 pub fn format_memory_tooltip(
@@ -134,22 +215,22 @@ fn install_event_handlers(tx: Sender<TrayCommand>) {
     }));
 }
 
-/// Load the application icon from the embedded PNG, resize to 32×32 for
-/// the system tray, and convert to raw RGBA for `tray_icon::Icon`.
-fn load_app_icon() -> Result<Icon, Box<dyn std::error::Error>> {
-    let png_data = include_bytes!("../App.png");
-    let img = image::load_from_memory(png_data)?;
-    let img = img
-        .resize(32, 32, image::imageops::FilterType::Lanczos3)
-        .to_rgba8();
-    let (width, height) = img.dimensions();
-    Icon::from_rgba(img.into_raw(), width, height).map_err(Into::into)
+fn load_icon_source() -> RgbaImage {
+    load_app_icon_rgba().unwrap_or_else(|_| {
+        let (rgba, width, height) = fallback_icon_rgba();
+        RgbaImage::from_raw(width, height, rgba).expect("fallback icon rgba")
+    })
 }
 
-/// Fallback icon used when the embedded PNG cannot be decoded – a simple
-/// green circle so the tray is at least visible even if something went
-/// wrong with the asset pipeline.
-fn create_fallback_icon() -> Icon {
+fn load_app_icon_rgba() -> Result<RgbaImage, Box<dyn std::error::Error>> {
+    let png_data = include_bytes!("../App.png");
+    let img = image::load_from_memory(png_data)?;
+    Ok(img
+        .resize(32, 32, image::imageops::FilterType::Lanczos3)
+        .to_rgba8())
+}
+
+fn fallback_icon_rgba() -> (Vec<u8>, u32, u32) {
     let width = 16u32;
     let height = 16u32;
     let mut rgba = vec![0u8; (width * height * 4) as usize];
@@ -169,11 +250,13 @@ fn create_fallback_icon() -> Icon {
         }
     }
 
-    Icon::from_rgba(rgba, width, height).unwrap_or_else(|_| {
-        Icon::from_rgba(vec![0, 0, 0, 0], 1, 1).unwrap_or_else(|_| {
-            panic!("tray_icon::Icon::from_rgba rejected a 1x1 transparent buffer")
-        })
-    })
+    (rgba, width, height)
+}
+
+fn create_fallback_icon() -> Icon {
+    let source = load_icon_source();
+    let (width, height) = source.dimensions();
+    icon_from_rgba(source.into_raw(), width, height)
 }
 
 pub fn dispatch_command(
@@ -206,6 +289,11 @@ mod tests {
             avail: 8 * 1024 * 1024 * 1024,
             used_percent: percent,
         }
+    }
+
+    fn sample_icon() -> RgbaImage {
+        RgbaImage::from_raw(2, 2, vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 0, 255])
+            .expect("sample icon")
     }
 
     #[test]
@@ -242,5 +330,15 @@ mod tests {
             let physical = section("Physical Memory", 46.0);
             assert_eq!(format_memory_tooltip(&physical, None), "Physical: 46%");
         });
+    }
+
+    #[test]
+    fn rotate_quarters_cycles_square_icon_dimensions() {
+        let source = sample_icon();
+        for quarters in 0..4 {
+            let rotated = rotate_quarters(&source, quarters);
+            assert_eq!(rotated.dimensions(), (2, 2));
+        }
+        assert_eq!(rotate_quarters(&source, 4), rotate_quarters(&source, 0));
     }
 }

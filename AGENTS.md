@@ -69,7 +69,7 @@ cargo run --release
 make clean # cargo clean
 ```
 
-**Tests:** `make test` / `cargo test` — 36 unit tests in `src/` plus 2 integration tests in `tests/settings_persistence.rs`. Pure logic (memory formatting, cleanup messages, settings TOML/locale, tray tooltip, hotkey parsing, optimize step plan, layout metrics, icon-cache outcomes, notification XML escape) is covered; Win32/GPUI paths remain manual QA.
+**Tests:** `make test` / `cargo test` — 36 unit tests in `src/` plus 2 integration tests in `tests/settings_persistence.rs`.
 
 ## Code Conventions & Common Patterns
 
@@ -120,58 +120,16 @@ make clean # cargo clean
 These fields exist in `settings.toml` for forward compatibility but have no runtime logic yet:
 
 - `auto_optimization_interval` / `auto_optimization_memory_usage` — scheduled or threshold-triggered auto cleanup
-- `tray_icon_*` — dynamic tray icon based on memory usage (see **Dynamic Tray Icon** below)
+- `tray_icon_*` — reserved tray icon settings (no runtime logic)
 
 Implemented since earlier docs (do **not** list as unimplemented):
 
 - `show_optimization_notifications` — Windows Toast on optimize start/complete
 - `cleanup_hotkey_enabled` / `cleanup_hotkey` — global hotkey via `RegisterHotKey`
 
-## Dynamic Tray Icon (Not Yet Implemented)
+## Tray Icon Blink During Cleanup
 
-Reserved settings in `settings.rs`:
-
-| Field | Default | Intended behavior |
-|---|---|---|
-| `tray_icon_show_memory_usage` | `false` | Master switch; when off, keep static `App.png` icon |
-| `tray_icon_use_transparent_background` | `false` | Draw icon on transparent vs solid dark background |
-| `tray_icon_warning_level` | `80` | Physical memory % ≥ this → warning (yellow) tier |
-| `tray_icon_danger_level` | `90` | Physical memory % ≥ this → danger (red) tier |
-
-### Recommended implementation
-
-1. **New module** `src/tray_icon.rs` (or extend `tray.rs`):
-   - Pure functions: `memory_tier(percent, warning, danger) -> Normal | Warning | Danger`
-   - `render_tray_icon(base_rgba, percent, tier, show_percent, transparent_bg) -> Vec<u8>` using the existing `image` crate
-   - Build 32×32 RGBA buffer → `tray_icon::Icon::from_rgba` → `TrayIcon::set_icon`
-
-2. **Icon rendering strategy** (pick one, test on Win10/11 tray):
-   - **Tier tint:** Decode embedded `App.png` once, overlay a colored ring or multiply tint by tier color (green / `#F59E0B` / `#EF4444`, matching `memory_card.rs` thresholds).
-   - **Percent badge:** When `tray_icon_show_memory_usage`, draw 1–2 digit `used_percent` centered (reuse ring colors for text).
-   - **Cache by bucket:** Key `(tier, percent_decile, show_percent, transparent_bg)` in a `OnceLock<HashMap<_, Icon>>` to avoid reallocating every tick; at most ~30 entries.
-
-3. **Hook into `sync_display`** in `tray.rs`:
-   ```rust
-   pub fn sync_display(physical, virtual_mem, window_visible, settings: &Settings) {
-       // existing tooltip + menu text ...
-       if settings.tray_icon_show_memory_usage {
-           if let Some(icon) = tray_icon::icon_for_memory(physical, settings) {
-               let _ = tray.icon.set_icon(Some(icon));
-           }
-       }
-   }
-   ```
-   Track `last_tray_tier` / `last_tray_percent` on `MemoryCleanerApp` and skip `set_icon` when unchanged (reduces flicker).
-
-4. **Background polling when hidden:** Current `start_memory_refresh` only runs while `window_shown`. For a live tray icon when the window is hidden, add a separate loop in `start_background_tasks`:
-   - If `tray_icon_show_memory_usage`: poll memory every 5–10 s even when hidden, call `refresh_memory` + `sync_tray`.
-   - If disabled: keep current behavior (refresh on tray hover only when hidden).
-
-5. **Settings UI:** Add rows to `render_window_behavior_dialog` in `settings_page.rs` — switch for `tray_icon_show_memory_usage`, optional transparent background, numeric inputs or sliders for warning/danger levels (clamp 1–99, enforce `warning < danger` in `normalize_*`).
-
-6. **Tests:** Unit-test `memory_tier`, icon cache key stability, and that `sync_display` skips `set_icon` when tier unchanged (mock or extract pure logic).
-
-7. **Manual QA:** Verify 32×32 clarity in light/dark taskbar, HiDPI scaling, and that frequent `set_icon` does not flicker the notification area.
+While `run_optimize` is in progress, `tray::start_spin()` rotates the tray icon in 90° steps every 120ms (`rotate_quarters` + `imageops`); `tray::stop_spin()` restores the upright icon. This avoids Windows `CreateIcon` transparency artifacts from blink/hide approaches.
 
 ## Runtime / Tooling Preferences
 

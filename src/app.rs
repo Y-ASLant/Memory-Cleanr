@@ -753,6 +753,7 @@ impl MemoryCleanerApp {
         self.optimize_percent = 0.0;
         self.optimize_status.clear();
         self.optimize_has_errors = false;
+        crate::tray::start_spin();
         cx.notify();
 
         cx.spawn(async move |this, cx| {
@@ -790,6 +791,7 @@ impl MemoryCleanerApp {
                     app.optimize_step.clear();
                     app.is_optimizing = false;
                     app.optimize_percent = 0.0;
+                    crate::tray::stop_spin();
                     let completed_refs: Vec<&str> = completed.iter().map(|s| s.as_str()).collect();
                     let errors_refs: Vec<&str> = errors.iter().map(|s| s.as_str()).collect();
                     app.optimize_has_errors = !errors.is_empty();
