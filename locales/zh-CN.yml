@@ -100,6 +100,21 @@ settings.cleanup_areas:
 settings.cleanup_areas_hint:
   zh-CN: "提示：「待机列表」与「待机列表(低优先级)」只能勾选其一"
   en: "Tip: \"Standby List\" and \"Standby List (Low)\" are mutually exclusive"
+settings.process_exclusion:
+  zh-CN: "排除进程"
+  en: "Excluded Processes"
+settings.process_exclusion_select:
+  zh-CN: "选择进程"
+  en: "Select process"
+settings.process_exclusion_add:
+  zh-CN: "添加"
+  en: "Add"
+settings.process_exclusion_remove:
+  zh-CN: "移除"
+  en: "Remove"
+settings.process_exclusion_empty:
+  zh-CN: "暂无排除进程"
+  en: "No excluded processes"
 settings.language:
   zh-CN: "界面语言"
   en: "Interface Language"

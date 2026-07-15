@@ -15,9 +15,9 @@ use crate::win32::nt::{
     nt_set_system_information,
 };
 
-type OptimizeFn = fn() -> Result<()>;
-pub type OptimizeStepFn = OptimizeFn;
-type StepPlan = Vec<(String, OptimizeFn)>;
+type StepPlan = Vec<(String, OptimizeStepFn)>;
+
+pub type OptimizeStepFn = Box<dyn Fn() -> Result<()> + Send>;
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,53 +64,64 @@ impl MemoryAreas {
 
 struct OptimizeStep {
     area: MemoryAreas,
-    run: OptimizeFn,
 }
 
 const OPTIMIZE_STEPS: &[OptimizeStep] = &[
     OptimizeStep {
         area: MemoryAreas::WORKING_SET,
-        run: optimize_working_set,
     },
     OptimizeStep {
         area: MemoryAreas::SYSTEM_FILE_CACHE,
-        run: optimize_system_file_cache,
     },
     OptimizeStep {
         area: MemoryAreas::MODIFIED_PAGE_LIST,
-        run: optimize_modified_page_list,
     },
     OptimizeStep {
         area: MemoryAreas::STANDBY_LIST,
-        run: || optimize_standby_list(false),
     },
     OptimizeStep {
         area: MemoryAreas::STANDBY_LIST_LOW_PRIORITY,
-        run: || optimize_standby_list(true),
     },
     OptimizeStep {
         area: MemoryAreas::COMBINED_PAGE_LIST,
-        run: optimize_combined_page_list,
     },
     OptimizeStep {
         area: MemoryAreas::MODIFIED_FILE_CACHE,
-        run: optimize_modified_file_cache,
     },
     OptimizeStep {
         area: MemoryAreas::REGISTRY_CACHE,
-        run: optimize_registry_cache,
     },
 ];
 
-pub fn step_plan(areas: MemoryAreas) -> Result<StepPlan> {
+pub fn step_plan(areas: MemoryAreas, excluded_processes: &[String]) -> Result<StepPlan> {
     if areas.is_empty() {
         bail!("no memory areas selected");
     }
 
+    let excluded = excluded_processes.to_vec();
     Ok(OPTIMIZE_STEPS
         .iter()
         .filter(|step| areas.contains(step.area))
-        .map(|step| (step.area.label(), step.run))
+        .map(|step| {
+            let label = step.area.label();
+            let run: OptimizeStepFn = match step.area {
+                MemoryAreas::WORKING_SET => {
+                    let excluded = excluded.clone();
+                    Box::new(move || optimize_working_set(&excluded))
+                }
+                MemoryAreas::SYSTEM_FILE_CACHE => Box::new(optimize_system_file_cache),
+                MemoryAreas::MODIFIED_PAGE_LIST => Box::new(optimize_modified_page_list),
+                MemoryAreas::STANDBY_LIST => Box::new(|| optimize_standby_list(false)),
+                MemoryAreas::STANDBY_LIST_LOW_PRIORITY => {
+                    Box::new(|| optimize_standby_list(true))
+                }
+                MemoryAreas::COMBINED_PAGE_LIST => Box::new(optimize_combined_page_list),
+                MemoryAreas::MODIFIED_FILE_CACHE => Box::new(optimize_modified_file_cache),
+                MemoryAreas::REGISTRY_CACHE => Box::new(optimize_registry_cache),
+                _ => Box::new(|| Ok(())),
+            };
+            (label, run)
+        })
         .collect())
 }
 
@@ -121,14 +132,14 @@ mod tests {
 
     #[test]
     fn step_plan_rejects_empty_selection() {
-        assert!(step_plan(MemoryAreas::empty()).is_err());
+        assert!(step_plan(MemoryAreas::empty(), &[]).is_err());
     }
 
     #[test]
     fn step_plan_preserves_optimize_order_zh() {
         with_locale("zh-CN", || {
             let areas = MemoryAreas::MODIFIED_FILE_CACHE | MemoryAreas::WORKING_SET;
-            let plan = step_plan(areas).expect("plan");
+            let plan = step_plan(areas, &[]).expect("plan");
             let labels: Vec<_> = plan.into_iter().map(|(label, _)| label).collect();
             assert_eq!(labels, vec!["工作集", "已修改文件"]);
         });
@@ -138,7 +149,7 @@ mod tests {
     fn step_plan_preserves_optimize_order_en() {
         with_locale("en", || {
             let areas = MemoryAreas::MODIFIED_FILE_CACHE | MemoryAreas::WORKING_SET;
-            let plan = step_plan(areas).expect("plan");
+            let plan = step_plan(areas, &[]).expect("plan");
             let labels: Vec<_> = plan.into_iter().map(|(label, _)| label).collect();
             assert_eq!(labels, vec!["Working Set", "Modified File Cache"]);
         });
@@ -176,12 +187,19 @@ fn purge_memory_list(command: SystemMemoryListCommand, privilege: &str, what: &s
     Ok(())
 }
 
-fn optimize_working_set() -> Result<()> {
-    purge_memory_list(
-        SystemMemoryListCommand::EmptyWorkingSets,
-        "SeProfileSingleProcessPrivilege",
-        "Working Set",
-    )
+fn optimize_working_set(excluded: &[String]) -> Result<()> {
+    if excluded.is_empty() {
+        purge_memory_list(
+            SystemMemoryListCommand::EmptyWorkingSets,
+            "SeProfileSingleProcessPrivilege",
+            "Working Set",
+        )
+    } else {
+        enable_privilege("SeDebugPrivilege")
+            .context("Working Set (per-process) requires SeDebugPrivilege")?;
+        crate::win32::process::empty_working_sets_except(excluded)
+            .context("Working Set per-process cleanup failed")
+    }
 }
 
 fn optimize_system_file_cache() -> Result<()> {

@@ -134,6 +134,7 @@ pub struct MemoryCleanerApp {
     window_shown: bool,
     pub cleanup_hotkey_recording: bool,
     pub(crate) hotkey_capture_focus: FocusHandle,
+    pub process_exclusion_pick: Option<String>,
 }
 
 impl MemoryCleanerApp {
@@ -183,6 +184,7 @@ impl MemoryCleanerApp {
             window_shown: true,
             cleanup_hotkey_recording: false,
             hotkey_capture_focus: cx.focus_handle(),
+            process_exclusion_pick: None,
         };
 
         cx.set_global(AppEntityHolder(cx.entity()));
@@ -455,6 +457,62 @@ impl MemoryCleanerApp {
         self.settings.memory_areas = areas.bits();
         self.queue_settings_save(cx);
         cx.notify();
+    }
+
+    pub fn set_process_exclusion_pick(&mut self, name: Option<String>, cx: &mut Context<Self>) {
+        if self.is_optimizing {
+            return;
+        }
+        self.process_exclusion_pick = name;
+        cx.notify();
+    }
+
+    pub fn add_excluded_process(&mut self, cx: &mut Context<Self>) {
+        if self.is_optimizing {
+            return;
+        }
+        let Some(name) = self.process_exclusion_pick.clone() else {
+            return;
+        };
+        let normalized = win32::process::normalize_process_name(&name);
+        if normalized.is_empty() {
+            return;
+        }
+        if self
+            .settings
+            .excluded_processes
+            .iter()
+            .any(|existing| existing == &normalized)
+        {
+            return;
+        }
+        self.settings.excluded_processes.push(normalized);
+        self.settings.excluded_processes.sort();
+        self.process_exclusion_pick = None;
+        self.queue_settings_save(cx);
+        cx.notify();
+    }
+
+    pub fn remove_excluded_process(&mut self, name: &str, cx: &mut Context<Self>) {
+        if self.is_optimizing {
+            return;
+        }
+        let normalized = win32::process::normalize_process_name(name);
+        self.settings
+            .excluded_processes
+            .retain(|existing| existing != &normalized);
+        if self.process_exclusion_pick.as_deref() == Some(normalized.as_str()) {
+            self.process_exclusion_pick = None;
+        }
+        self.queue_settings_save(cx);
+        cx.notify();
+    }
+
+    pub fn available_processes_for_exclusion(&self) -> Vec<String> {
+        win32::process::list_running_process_names(
+            crate::version::PROCESS_BASE_NAME,
+            &self.settings.excluded_processes,
+        )
     }
 
     pub fn open_window_behavior_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -736,7 +794,8 @@ impl MemoryCleanerApp {
         }
 
         let areas = self.settings.memory_areas();
-        let steps = match optimize::step_plan(areas) {
+        let excluded = self.settings.excluded_processes.clone();
+        let steps = match optimize::step_plan(areas, &excluded) {
             Ok(s) if !s.is_empty() => s,
             _ => {
                 self.optimize_status = t!("tooltip.select_areas").to_string();
@@ -908,6 +967,7 @@ impl Render for MemoryCleanerApp {
             .outline()
             .w_full()
             .p_0()
+            .content_style(StyleRefinement::default().p_2())
             .child(
                 v_flex()
                     .w_full()
@@ -933,6 +993,7 @@ impl Render for MemoryCleanerApp {
                         .outline()
                         .w_full()
                         .p_0()
+                        .content_style(StyleRefinement::default().p_2())
                         .child(
                             v_flex()
                                 .w_full()

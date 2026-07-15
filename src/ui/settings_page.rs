@@ -4,19 +4,27 @@ use gpui_component::{
     ActiveTheme, Disableable, Icon, IconName, Sizable,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
+    group_box::{GroupBox, GroupBoxVariants},
     h_flex,
     kbd::Kbd,
     label::Label,
     menu::{DropdownMenu, PopupMenuItem},
     progress::ProgressCircle,
+    scroll::ScrollableElement as _,
     switch::Switch,
     v_flex,
 };
 use rust_i18n::t;
 
-use crate::app::{CONTENT_PADDING, MemoryCleanerApp};
+use crate::app::MemoryCleanerApp;
 use crate::optimize::MemoryAreas;
-use crate::ui::layout::{CLEANUP_BUTTON_H, SECTION_GAP};
+use crate::ui::layout::{
+    CLEANUP_BUTTON_H, EXCLUSION_LIST_PADDING, EXCLUSION_LIST_ROW_GAP, EXCLUSION_ROW_HEIGHT,
+    PROCESS_PICKER_MENU_MAX_H, SECTION_GAP, process_exclusion_list_max_height,
+};
+
+const EXCLUSION_REMOVE_BTN: f32 = 22.;
+const EXCLUSION_SELECTOR_H: f32 = 32.;
 use crate::win32::hotkey::HotkeyBinding;
 
 const ROW_GAP: f32 = 6.;
@@ -123,6 +131,190 @@ fn render_cleanup_areas(
             app,
             cx,
         ))
+}
+
+fn render_process_exclusion_row(
+    index: usize,
+    name: &str,
+    app: &MemoryCleanerApp,
+    foreground: Hsla,
+    danger: Hsla,
+    cx: &mut Context<MemoryCleanerApp>,
+) -> impl IntoElement {
+    let name = name.to_string();
+    let remove_id = SharedString::from(format!("process-exclusion-remove-{index}"));
+    let label = name.clone();
+
+    h_flex()
+        .w_full()
+        .h(px(EXCLUSION_ROW_HEIGHT))
+        .flex_shrink_0()
+        .items_center()
+        .gap_3()
+        .px_2()
+        .child(
+            Label::new(label)
+                .text_sm()
+                .text_color(foreground)
+                .flex_1()
+                .min_w_0()
+                .truncate(),
+        )
+        .child({
+            let name = name.clone();
+            let mut button = Button::new(remove_id)
+                .ghost()
+                .small()
+                .flex_shrink_0()
+                .w(px(EXCLUSION_REMOVE_BTN))
+                .h(px(EXCLUSION_REMOVE_BTN))
+                .tooltip(t!("settings.process_exclusion_remove").to_string())
+                .on_click(cx.listener(move |app, _, _, cx| {
+                    app.remove_excluded_process(&name, cx);
+                }))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(danger)
+                        .child(Icon::new(IconName::CircleX).small()),
+                );
+            if app.is_optimizing {
+                button = button.disabled(true);
+            }
+            button
+        })
+}
+
+fn render_process_exclusion_list(
+    app: &MemoryCleanerApp,
+    excluded: &[String],
+    border: Hsla,
+    muted: Hsla,
+    foreground: Hsla,
+    danger: Hsla,
+    cx: &mut Context<MemoryCleanerApp>,
+) -> impl IntoElement {
+    let list_height = process_exclusion_list_max_height();
+    let radius = cx.theme().radius;
+    let mut list = v_flex().w_full().gap(px(EXCLUSION_LIST_ROW_GAP));
+    if excluded.is_empty() {
+        list = list.child(
+            div()
+                .w_full()
+                .h_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    Label::new(t!("settings.process_exclusion_empty").to_string())
+                        .text_sm()
+                        .text_color(foreground.opacity(0.55)),
+                ),
+        );
+    } else {
+        for (index, name) in excluded.iter().enumerate() {
+            list = list.child(render_process_exclusion_row(
+                index, name, app, foreground, danger, cx,
+            ));
+        }
+    }
+
+    div()
+        .id("process-exclusion-list")
+        .w_full()
+        .h(px(list_height))
+        .rounded(radius)
+        .border_1()
+        .border_color(border)
+        .bg(muted.opacity(0.06))
+        .p(px(EXCLUSION_LIST_PADDING))
+        .overflow_y_scrollbar()
+        .child(list)
+}
+
+fn render_process_exclusion(
+    app: &MemoryCleanerApp,
+    border: Hsla,
+    muted: Hsla,
+    foreground: Hsla,
+    danger: Hsla,
+    cx: &mut Context<MemoryCleanerApp>,
+) -> impl IntoElement {
+    let weak = cx.weak_entity();
+    let excluded = app.settings.excluded_processes.clone();
+    let available = app.available_processes_for_exclusion();
+    let pick = app.process_exclusion_pick.clone();
+    let pick_label = pick
+        .clone()
+        .unwrap_or_else(|| t!("settings.process_exclusion_select").to_string());
+    let can_add = pick.is_some() && !app.is_optimizing;
+    let selector_h = px(EXCLUSION_SELECTOR_H);
+
+    v_flex()
+        .w_full()
+        .gap(px(crate::ui::layout::EXCLUSION_FOOTER_GAP))
+        .child(render_process_exclusion_list(
+            app, &excluded, border, muted, foreground, danger, cx,
+        ))
+        .child(
+            h_flex()
+                .w_full()
+                .items_center()
+                .gap_3()
+                .child({
+                    let weak = weak.clone();
+                    let available = available.clone();
+                    let pick = pick.clone();
+                    Button::new("process-exclusion-select")
+                        .outline()
+                        .small()
+                        .flex_1()
+                        .min_w_0()
+                        .h(selector_h)
+                        .when(app.is_optimizing, |this| this.disabled(true))
+                        .label(pick_label)
+                        .dropdown_caret(true)
+                        .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, _, _| {
+                            let menu = available.iter().fold(menu, |menu, name| {
+                                let name = name.clone();
+                                let checked = pick.as_deref() == Some(name.as_str());
+                                let weak = weak.clone();
+                                menu.item(PopupMenuItem::new(name.clone()).checked(checked).on_click(
+                                    move |_, _, cx| {
+                                        let _ = weak.update(cx, |app, cx| {
+                                            app.set_process_exclusion_pick(Some(name.clone()), cx);
+                                        });
+                                    },
+                                ))
+                            });
+                            menu.scrollable(true)
+                                .max_h(px(PROCESS_PICKER_MENU_MAX_H))
+                        })
+                })
+                .child({
+                    let mut button = Button::new("process-exclusion-add")
+                        .outline()
+                        .small()
+                        .flex_shrink_0()
+                        .w(selector_h)
+                        .h(selector_h)
+                        .tooltip(t!("settings.process_exclusion_add").to_string())
+                        .on_click(cx.listener(|app, _, _, cx| {
+                            app.add_excluded_process(cx);
+                        }))
+                        .child(
+                            Label::new("+")
+                                .text_sm()
+                                .font_weight(FontWeight::SEMIBOLD),
+                        );
+                    if !can_add {
+                        button = button.disabled(true);
+                    }
+                    button
+                }),
+        )
 }
 
 struct SwitchRowConfig {
@@ -711,32 +903,57 @@ pub fn render_settings_content(
     cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
     let theme = cx.theme();
-    render_settings_details(app, theme.border, theme.radius, theme.muted_foreground, cx)
+    render_settings_details(app, theme.muted_foreground, cx)
+}
+
+fn compact_group_box_style() -> StyleRefinement {
+    StyleRefinement::default().p_2().gap_2()
+}
+
+fn render_settings_card(
+    id: &'static str,
+    title_icon: IconName,
+    title: String,
+    content: impl IntoElement,
+) -> impl IntoElement {
+    GroupBox::new()
+        .id(id)
+        .outline()
+        .w_full()
+        .p_0()
+        .content_style(compact_group_box_style())
+        .child(
+            v_flex()
+                .w_full()
+                .gap(px(4.))
+                .child(panel_section_title(title_icon, title))
+                .child(content),
+        )
 }
 
 fn render_settings_details(
     app: &MemoryCleanerApp,
-    border: Hsla,
-    radius: Pixels,
     muted: Hsla,
     cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
-    div()
+    let foreground = cx.theme().foreground;
+    let danger = cx.theme().danger;
+    let border = cx.theme().border;
+    v_flex()
         .id("settings-details-panel")
         .w_full()
         .flex_shrink_0()
-        .rounded(radius)
-        .border_1()
-        .border_color(border)
-        .child(
-            v_flex()
-                .w_full()
-                .p(px(CONTENT_PADDING))
-                .gap(px(SECTION_GAP))
-                .child(panel_section_title(
-                    IconName::Settings,
-                    t!("settings.cleanup_areas").to_string(),
-                ))
-                .child(render_cleanup_areas(app, muted, cx)),
-        )
+        .gap(px(SECTION_GAP))
+        .child(render_settings_card(
+            "process-exclusion-card",
+            IconName::CircleX,
+            t!("settings.process_exclusion").to_string(),
+            render_process_exclusion(app, border, muted, foreground, danger, cx),
+        ))
+        .child(render_settings_card(
+            "cleanup-areas-card",
+            IconName::Settings,
+            t!("settings.cleanup_areas").to_string(),
+            render_cleanup_areas(app, muted, cx),
+        ))
 }

@@ -9,9 +9,8 @@ pub const TITLE_BAR_H: f32 = 34.;
 pub const CLEANUP_BUTTON_H: f32 = 48.;
 
 const CARD_BORDER: f32 = 2.;
-/// GroupBox outline 内层固定 `p_4()`（上下各 16px）。
-const GROUP_BOX_OUTLINE_PADDING_V: f32 = 32.;
-const PANEL_BORDER: f32 = 2.;
+/// GroupBox outline 内容区 `p_2()`（上下各 8px）。
+const GROUP_BOX_OUTLINE_PADDING_V: f32 = 16.;
 const MEMORY_HEADER_H: f32 = 20.;
 const MEMORY_LINE_GAP: f32 = 4.;
 const MEMORY_SUMMARY_H: f32 = 16.;
@@ -20,12 +19,18 @@ const SECTION_TITLE_H: f32 = 20.;
 const HINT_H: f32 = 24.;
 const CHECKBOX_ROW_H: f32 = 22.;
 const CLEANUP_ROWS: f32 = 4.;
+/// 进程排除列表固定可视行数（超出后内部滚动）。
+pub const EXCLUSION_LIST_MAX_ROWS: f32 = 5.;
+pub const EXCLUSION_ROW_HEIGHT: f32 = 26.;
+pub const EXCLUSION_LIST_ROW_GAP: f32 = 4.;
+pub const EXCLUSION_LIST_PADDING: f32 = 4.;
+pub const EXCLUSION_FOOTER_GAP: f32 = 6.;
+const EXCLUSION_SELECTOR_H: f32 = 32.;
+const EXCLUSION_EMPTY_H: f32 = 24.;
 /// 提示条 + 4 行 checkbox 共 5 项，`v_flex().gap(6)` 产生 4 个间距。
 const CLEANUP_ROW_GAPS: f32 = SECTION_GAP * CLEANUP_ROWS;
 /// 折叠窗口高度略偏低时会裁切 footer 底边距，补回至 6px。
 const COLLAPSED_FOOTER_PADDING_GUARD: f32 = 4.;
-/// 展开窗口高度估算偏高时的负向微调（仅影响 `window.resize`）。
-const EXPANDED_WINDOW_HEIGHT_ADJUSTMENT: f32 = -22.;
 
 pub fn memory_section_height() -> f32 {
     use crate::ui::memory_card::{MEMORY_CARD_PY, MEMORY_RING_SIZE};
@@ -41,10 +46,35 @@ pub fn memory_section_height() -> f32 {
 }
 
 pub fn cleanup_section_height(content_padding: f32) -> f32 {
-    let cleanup_areas = HINT_H + SECTION_GAP + CHECKBOX_ROW_H * CLEANUP_ROWS + CLEANUP_ROW_GAPS;
+    let cleanup_areas = section_card_height(
+        content_padding,
+        HINT_H + SECTION_GAP + CHECKBOX_ROW_H * CLEANUP_ROWS + CLEANUP_ROW_GAPS,
+    );
+    let exclusion_list = process_exclusion_list_max_height();
+    let process_exclusion = section_card_height(
+        content_padding,
+        exclusion_list + EXCLUSION_FOOTER_GAP + EXCLUSION_SELECTOR_H,
+    );
 
-    PANEL_BORDER + content_padding * 2. + SECTION_TITLE_H + SECTION_GAP + cleanup_areas
+    process_exclusion + SECTION_GAP + cleanup_areas
 }
+
+fn section_card_height(_content_padding: f32, body: f32) -> f32 {
+    CARD_BORDER + GROUP_BOX_OUTLINE_PADDING_V + SECTION_TITLE_H + SECTION_GAP + body
+}
+
+pub fn process_exclusion_list_max_height() -> f32 {
+    let rows = if EXCLUSION_LIST_MAX_ROWS <= 0. {
+        EXCLUSION_EMPTY_H
+    } else {
+        EXCLUSION_ROW_HEIGHT * EXCLUSION_LIST_MAX_ROWS
+            + EXCLUSION_LIST_ROW_GAP * (EXCLUSION_LIST_MAX_ROWS - 1.)
+    };
+    rows + EXCLUSION_LIST_PADDING * 2.
+}
+
+/// 进程下拉菜单最大高度（向上展开，避免遮挡下方控件）。
+pub const PROCESS_PICKER_MENU_MAX_H: f32 = 180.;
 
 pub fn collapsed_window_height(content_padding: f32) -> f32 {
     TITLE_BAR_H
@@ -56,16 +86,8 @@ pub fn collapsed_window_height(content_padding: f32) -> f32 {
         + COLLAPSED_FOOTER_PADDING_GUARD
 }
 
-pub fn expanded_window_height(content_padding: f32) -> f32 {
-    TITLE_BAR_H
-        + content_padding
-        + memory_section_height()
-        + SECTION_GAP
-        + cleanup_section_height(content_padding)
-        + SECTION_GAP
-        + CLEANUP_BUTTON_H
-        + content_padding
-        + EXPANDED_WINDOW_HEIGHT_ADJUSTMENT
+pub fn expanded_window_height(_content_padding: f32) -> f32 {
+    680.
 }
 
 #[cfg(test)]

@@ -1,17 +1,37 @@
 use std::mem::MaybeUninit;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
-use windows::Win32::Foundation::CloseHandle;
+use anyhow::{Context, Result, bail};
+use windows::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED, GetLastError};
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
-use windows::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
+use windows::Win32::System::ProcessStatus::K32EmptyWorkingSet;
+use windows::Win32::System::Threading::{
+    OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_SET_QUOTA, PROCESS_TERMINATE, TerminateProcess,
+};
+
+/// Normalize a process name for exclusion matching: lowercase, no whitespace, no `.exe`.
+pub fn normalize_process_name(name: &str) -> String {
+    let trimmed: String = name.chars().filter(|c| !c.is_whitespace()).collect();
+    let lower = trimmed.to_ascii_lowercase();
+    lower
+        .strip_suffix(".exe")
+        .unwrap_or(lower.as_str())
+        .to_string()
+}
 
 fn exe_name_matches(entry: &PROCESSENTRY32W, target: &[u16]) -> bool {
     let name = entry.szExeFile;
     let len = name.iter().position(|&c| c == 0).unwrap_or(name.len());
     name[..len] == target[..]
+}
+
+fn exe_base_name_from_entry(entry: &PROCESSENTRY32W) -> String {
+    let name = entry.szExeFile;
+    let len = name.iter().position(|&c| c == 0).unwrap_or(name.len());
+    let utf16 = &name[..len];
+    normalize_process_name(&String::from_utf16_lossy(utf16))
 }
 
 fn with_process_snapshot<F>(mut f: F) -> Result<()>
@@ -38,6 +58,68 @@ where
         let _ = CloseHandle(snapshot);
     }
     Ok(())
+}
+
+pub fn is_process_excluded(process_name: &str, excluded: &[String]) -> bool {
+    let normalized = normalize_process_name(process_name);
+    excluded.iter().any(|name| name == &normalized)
+}
+
+/// Distinct running process base names, excluding this app and already-excluded entries.
+pub fn list_running_process_names(self_base: &str, excluded: &[String]) -> Vec<String> {
+    let self_normalized = normalize_process_name(self_base);
+    let mut names = Vec::new();
+
+    let _ = with_process_snapshot(|entry| {
+        let name = exe_base_name_from_entry(entry);
+        if name == self_normalized
+            || excluded.iter().any(|excluded| excluded == &name)
+            || names.iter().any(|existing| existing == &name)
+        {
+            return false;
+        }
+        names.push(name);
+        false
+    });
+
+    names.sort();
+    names
+}
+
+/// Empty working sets for every running process except those in `excluded`.
+pub fn empty_working_sets_except(excluded: &[String]) -> Result<()> {
+    let mut errors = Vec::new();
+
+    with_process_snapshot(|entry| {
+        let name = exe_base_name_from_entry(entry);
+        if is_process_excluded(&name, excluded) {
+            return false;
+        }
+
+        let pid = entry.th32ProcessID;
+        let handle = match unsafe {
+            OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_SET_QUOTA, false, pid)
+        } {
+            Ok(handle) => handle,
+            Err(_) => return false,
+        };
+
+        let result = unsafe { K32EmptyWorkingSet(handle) };
+        if !result.as_bool() {
+            let last_error = unsafe { GetLastError() };
+            if last_error != ERROR_ACCESS_DENIED {
+                errors.push(format!("{name} (pid {pid}): {last_error:?}"));
+            }
+        }
+        let _ = unsafe { CloseHandle(handle) };
+        false
+    })?;
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        bail!("Working Set per-process errors: {}", errors.join(", "));
+    }
 }
 
 /// Return true if another process with the same executable name is running.
@@ -112,4 +194,22 @@ pub fn wait_for_elevated_relaunch(current_pid: u32, exe_name: &str, timeout_ms: 
         std::thread::sleep(Duration::from_millis(100));
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_process_name_strips_exe_and_whitespace() {
+        assert_eq!(normalize_process_name(" Chrome.EXE "), "chrome");
+        assert_eq!(normalize_process_name("firefox"), "firefox");
+    }
+
+    #[test]
+    fn is_process_excluded_matches_case_insensitive_base_names() {
+        let excluded = vec!["chrome".to_string()];
+        assert!(is_process_excluded("Chrome.exe", &excluded));
+        assert!(!is_process_excluded("firefox", &excluded));
+    }
 }
