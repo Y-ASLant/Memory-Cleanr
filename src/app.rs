@@ -505,8 +505,8 @@ impl MemoryCleanerApp {
         cx.notify();
     }
 
-    pub fn available_processes_for_exclusion(&self) -> Vec<String> {
-        win32::process::list_running_process_names(
+    pub fn available_processes_for_exclusion(&self) -> Vec<win32::process::ProcessPickerEntry> {
+        win32::process::list_processes_for_exclusion_picker(
             crate::version::PROCESS_BASE_NAME,
             &self.settings.excluded_processes,
         )

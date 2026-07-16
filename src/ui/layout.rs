@@ -70,7 +70,7 @@ pub fn process_exclusion_list_max_height() -> f32 {
 }
 
 /// 进程下拉菜单最大高度（向上展开，避免遮挡下方控件）。
-pub const PROCESS_PICKER_MENU_MAX_H: f32 = 180.;
+pub const PROCESS_PICKER_MENU_MAX_H: f32 = 288.;
 
 /// 主窗口固定宽度（与 `app.rs` 中 `WINDOW_WIDTH` 保持一致）。
 pub const MAIN_WINDOW_WIDTH: f32 = 520.;

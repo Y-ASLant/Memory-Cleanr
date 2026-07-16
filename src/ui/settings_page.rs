@@ -18,6 +18,7 @@ use gpui_component::{
 use rust_i18n::t;
 
 use crate::app::MemoryCleanerApp;
+use crate::memory::MemoryStatus;
 use crate::optimize::MemoryAreas;
 use crate::ui::layout::{
     CLEANUP_BUTTON_H, EXCLUSION_LIST_PADDING, EXCLUSION_SELECTOR_H, EXCLUSION_TAG_GAP,
@@ -25,9 +26,24 @@ use crate::ui::layout::{
     process_exclusion_list_max_height, process_exclusion_selector_width,
 };
 use crate::win32::hotkey::HotkeyBinding;
+use crate::win32::process::ProcessPickerEntry;
 
 const ROW_GAP: f32 = 6.;
 const BUTTON_STATUS_TRUNCATE_CHARS: usize = 24;
+
+fn process_picker_detail(entry: &ProcessPickerEntry) -> String {
+    let memory = MemoryStatus::format_bytes(entry.working_set_bytes);
+    if entry.instance_count > 1 {
+        t!(
+            "settings.process_exclusion_picker_detail",
+            count = entry.instance_count,
+            memory = memory
+        )
+        .to_string()
+    } else {
+        memory
+    }
+}
 
 fn language_options() -> [(&'static str, String); 3] {
     [
@@ -253,12 +269,30 @@ fn render_process_exclusion(
                         .label(pick_label)
                         .dropdown_caret(true)
                         .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, _, _| {
-                            let menu = available.iter().fold(menu, |menu, name| {
-                                let name = name.clone();
+                            let menu = available.iter().fold(menu, |menu, entry| {
+                                let name = entry.name.clone();
+                                let detail = process_picker_detail(entry);
                                 let checked = pick.as_deref() == Some(name.as_str());
                                 let weak = weak.clone();
+                                let label = name.clone();
+                                let detail_label = detail.clone();
                                 menu.item(
-                                    PopupMenuItem::new(name.clone()).checked(checked).on_click(
+                                    PopupMenuItem::element(move |_, cx| {
+                                        h_flex()
+                                            .w_full()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_2()
+                                            .child(Label::new(label.clone()).text_sm().truncate())
+                                            .child(
+                                                Label::new(detail_label.clone())
+                                                    .text_sm()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .flex_shrink_0(),
+                                            )
+                                    })
+                                    .checked(checked)
+                                    .on_click(
                                         move |_, _, cx| {
                                             let _ = weak.update(cx, |app, cx| {
                                                 app.set_process_exclusion_pick(

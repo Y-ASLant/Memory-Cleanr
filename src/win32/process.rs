@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::mem::MaybeUninit;
 use std::time::Duration;
 
@@ -6,10 +7,50 @@ use windows::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED, GetLastError}
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
-use windows::Win32::System::ProcessStatus::K32EmptyWorkingSet;
-use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_SET_QUOTA, PROCESS_TERMINATE, TerminateProcess,
+use windows::Win32::System::ProcessStatus::{
+    GetProcessMemoryInfo, K32EmptyWorkingSet, PROCESS_MEMORY_COUNTERS,
 };
+use windows::Win32::System::Threading::{
+    OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_SET_QUOTA, PROCESS_TERMINATE, PROCESS_VM_READ,
+    TerminateProcess,
+};
+
+/// Running process entry for the exclusion picker dropdown.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessPickerEntry {
+    pub name: String,
+    pub instance_count: u32,
+    pub working_set_bytes: u64,
+}
+
+/// Processes that should not appear in the exclusion picker.
+fn is_picker_hidden_process(name: &str) -> bool {
+    matches!(name, "[systemprocess]" | "systemidleprocess")
+}
+
+fn query_process_working_set_bytes(pid: u32) -> u64 {
+    unsafe {
+        let handle = match OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) {
+            Ok(handle) => handle,
+            Err(_) => return 0,
+        };
+
+        let mut counters = PROCESS_MEMORY_COUNTERS::default();
+        let ok = GetProcessMemoryInfo(
+            handle,
+            &mut counters,
+            size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+        )
+        .is_ok();
+        let _ = CloseHandle(handle);
+
+        if ok {
+            counters.WorkingSetSize as u64
+        } else {
+            0
+        }
+    }
+}
 
 /// Normalize a process name for exclusion matching: lowercase, no whitespace, no `.exe`.
 pub fn normalize_process_name(name: &str) -> String {
@@ -65,25 +106,42 @@ pub fn is_process_excluded(process_name: &str, excluded: &[String]) -> bool {
     excluded.iter().any(|name| name == &normalized)
 }
 
-/// Distinct running process base names, excluding this app and already-excluded entries.
-pub fn list_running_process_names(self_base: &str, excluded: &[String]) -> Vec<String> {
+/// Distinct running processes for the exclusion picker, excluding system/hidden entries.
+pub fn list_processes_for_exclusion_picker(
+    self_base: &str,
+    excluded: &[String],
+) -> Vec<ProcessPickerEntry> {
     let self_normalized = normalize_process_name(self_base);
-    let mut names = Vec::new();
+    let mut by_name: HashMap<String, ProcessPickerEntry> = HashMap::new();
 
     let _ = with_process_snapshot(|entry| {
         let name = exe_base_name_from_entry(entry);
-        if name == self_normalized
-            || excluded.iter().any(|excluded| excluded == &name)
-            || names.iter().any(|existing| existing == &name)
+        if name.is_empty()
+            || name == self_normalized
+            || is_picker_hidden_process(&name)
+            || excluded.iter().any(|ex| ex == &name)
         {
             return false;
         }
-        names.push(name);
+
+        let working_set = query_process_working_set_bytes(entry.th32ProcessID);
+        by_name
+            .entry(name.clone())
+            .and_modify(|item| {
+                item.instance_count += 1;
+                item.working_set_bytes = item.working_set_bytes.saturating_add(working_set);
+            })
+            .or_insert(ProcessPickerEntry {
+                name,
+                instance_count: 1,
+                working_set_bytes: working_set,
+            });
         false
     });
 
-    names.sort();
-    names
+    let mut entries: Vec<_> = by_name.into_values().collect();
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    entries
 }
 
 /// Empty working sets for every running process except those in `excluded`.
@@ -211,5 +269,12 @@ mod tests {
         let excluded = vec!["chrome".to_string()];
         assert!(is_process_excluded("Chrome.exe", &excluded));
         assert!(!is_process_excluded("firefox", &excluded));
+    }
+
+    #[test]
+    fn is_picker_hidden_process_matches_system_entries() {
+        assert!(is_picker_hidden_process("[systemprocess]"));
+        assert!(is_picker_hidden_process("systemidleprocess"));
+        assert!(!is_picker_hidden_process("chrome"));
     }
 }

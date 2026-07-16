@@ -115,6 +115,9 @@ settings.process_exclusion_remove:
 settings.process_exclusion_empty:
   zh-CN: "暂无排除进程"
   en: "No excluded processes"
+settings.process_exclusion_picker_detail:
+  zh-CN: "×%{count} · %{memory}"
+  en: "×%{count} · %{memory}"
 settings.language:
   zh-CN: "界面语言"
   en: "Interface Language"
