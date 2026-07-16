@@ -256,31 +256,10 @@ fn optimize_combined_page_list() -> Result<()> {
     Ok(())
 }
 
-pub use crate::win32::volume::{VolumeFlushTarget, flush_volume_cache, list_volume_flush_targets};
+pub use crate::win32::volume::{VolumeFlushReport, complete_volume_flush, flush_all_volume_caches};
 
 fn optimize_modified_file_cache() -> Result<()> {
-    // Fallback when not using app per-volume progress UI.
-    let targets = list_volume_flush_targets()?;
-    if targets.is_empty() {
-        return Ok(());
-    }
-
-    let mut failed = Vec::new();
-    let mut succeeded = 0usize;
-    for target in &targets {
-        if flush_volume_cache(target).is_ok() {
-            succeeded += 1;
-        } else {
-            failed.push(target.label.clone());
-        }
-    }
-
-    if succeeded > 0 {
-        Ok(())
-    } else {
-        let volumes = failed.join(", ");
-        bail!(t!("optimize.volume_flush_failed", volumes = volumes))
-    }
+    complete_volume_flush(flush_all_volume_caches()?)
 }
 
 fn optimize_registry_cache() -> Result<()> {

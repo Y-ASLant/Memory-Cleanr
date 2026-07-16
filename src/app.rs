@@ -737,12 +737,16 @@ impl MemoryCleanerApp {
         step_index: usize,
         total_steps: usize,
     ) -> bool {
+        use std::sync::Arc;
+
+        use crate::win32::volume::{VolumeFlushSession, complete_volume_flush};
+
         let step_base = step_index as f32 / total_steps as f32;
         let step_span = 1.0 / total_steps as f32;
         let name = MemoryAreas::MODIFIED_FILE_CACHE.label();
 
-        let volumes = match smol::unblock(optimize::list_volume_flush_targets).await {
-            Ok(targets) if targets.is_empty() => {
+        let session = match smol::unblock(VolumeFlushSession::open).await {
+            Ok(session) if session.is_empty() => {
                 let _ = this.update(cx, |app, cx| {
                     app.optimize_step = t!("optimize.step", name = name.clone()).to_string();
                     app.optimize_percent = (step_base + step_span) * 100.0;
@@ -750,10 +754,10 @@ impl MemoryCleanerApp {
                 });
                 return true;
             }
-            Ok(targets) => targets,
-            Err(e) => {
+            Ok(session) => Arc::new(session),
+            Err(error) => {
                 crate::log::write(&format!(
-                    "[optimize] modified file cache volume enumeration failed: {e:#}"
+                    "[optimize] modified file cache volume enumeration failed: {error:#}"
                 ));
                 let _ = this.update(cx, |app, cx| {
                     app.optimize_step = t!("optimize.step", name = name.clone()).to_string();
@@ -764,20 +768,19 @@ impl MemoryCleanerApp {
             }
         };
 
-        let volume_total = volumes.len();
-        let mut failed = Vec::new();
-        let mut succeeded = 0usize;
+        let volume_total = session.len();
+        let mut report = optimize::VolumeFlushReport::default();
 
-        for (volume_index, target) in volumes.into_iter().enumerate() {
-            let sub_base = volume_index as f32 / volume_total as f32;
-            let volume_label = target.label.clone();
+        for index in 0..volume_total {
+            let volume_label = session.label(index).to_string();
+            let sub_base = index as f32 / volume_total as f32;
 
             let _ = this.update(cx, |app, cx| {
                 app.optimize_step = t!(
                     "optimize.step_with_progress",
                     name = name.clone(),
                     volume = volume_label.clone(),
-                    current = (volume_index + 1).to_string(),
+                    current = (index + 1).to_string(),
                     total = volume_total.to_string()
                 )
                 .to_string();
@@ -785,26 +788,19 @@ impl MemoryCleanerApp {
                 cx.notify();
             });
 
-            let volume_result = smol::unblock(move || optimize::flush_volume_cache(&target)).await;
-            match volume_result {
-                Ok(()) => succeeded += 1,
-                Err(e) => {
-                    crate::log::write(&format!(
-                        "[optimize] modified file cache volume {volume_label}: failed: {e:#}"
-                    ));
-                    failed.push(volume_label);
-                }
-            }
+            let session_for_flush = Arc::clone(&session);
+            let flush_index = index;
+            let flush_result = smol::unblock(move || session_for_flush.flush(flush_index)).await;
+            report.record(&volume_label, flush_result);
 
             let _ = this.update(cx, |app, cx| {
-                app.optimize_percent = (step_base
-                    + (volume_index + 1) as f32 / volume_total as f32 * step_span)
-                    * 100.0;
+                app.optimize_percent =
+                    (step_base + (index + 1) as f32 / volume_total as f32 * step_span) * 100.0;
                 cx.notify();
             });
         }
 
-        succeeded > 0
+        complete_volume_flush(report).is_ok()
     }
 
     pub fn run_optimize(&mut self, cx: &mut Context<Self>) {
