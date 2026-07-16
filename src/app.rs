@@ -949,66 +949,70 @@ impl MemoryCleanerApp {
     }
 }
 
+/// 创建内存卡片的 GroupBox 容器
+fn memory_group_box(
+    id: &'static str,
+    child: impl IntoElement,
+) -> gpui_component::group_box::GroupBox {
+    use gpui_component::group_box::{GroupBox, GroupBoxVariants};
+
+    GroupBox::new()
+        .id(id)
+        .outline()
+        .w_full()
+        .p_0()
+        .content_style(StyleRefinement::default().p_2())
+        .child(child)
+}
+
 impl Render for MemoryCleanerApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         use crate::ui::memory_card::render_memory_card;
         use crate::ui::settings_page::{render_cleanup_footer, render_settings_content};
         use crate::ui::title_bar::render_title_bar;
-        use gpui_component::{
-            group_box::{GroupBox, GroupBoxVariants},
-            h_flex, v_flex,
-        };
+        use gpui::prelude::FluentBuilder;
+        use gpui_component::{h_flex, v_flex};
 
         let bg = cx.theme().background;
         let show_virtual = self.virtual_mem.is_some();
 
-        let physical_card = GroupBox::new()
-            .id("physical-memory-card")
-            .outline()
-            .w_full()
-            .p_0()
-            .content_style(StyleRefinement::default().p_2())
-            .child(
+        let physical_card = memory_group_box(
+            "physical-memory-card",
+            v_flex()
+                .w_full()
+                .items_center()
+                .py(px(crate::ui::memory_card::MEMORY_CARD_PY))
+                .child(render_memory_card(
+                    &self.physical,
+                    "physical-memory",
+                    true,
+                    cx,
+                )),
+        );
+
+        let memory_row = if show_virtual {
+            let virtual_card = memory_group_box(
+                "virtual-memory-card",
                 v_flex()
                     .w_full()
                     .items_center()
                     .py(px(crate::ui::memory_card::MEMORY_CARD_PY))
                     .child(render_memory_card(
-                        &self.physical,
-                        "physical-memory",
-                        true,
+                        self.virtual_mem
+                            .as_ref()
+                            .expect("virtual card requires data"),
+                        "virtual-memory",
+                        false,
                         cx,
                     )),
             );
 
-        let memory_row = if show_virtual {
             h_flex()
                 .w_full()
                 .flex_shrink_0()
                 .gap(px(SECTION_GAP))
                 .child(div().flex_1().min_w_0().child(physical_card))
-                .child(div().flex_1().min_w_0().child({
-                    GroupBox::new()
-                        .id("virtual-memory-card")
-                        .outline()
-                        .w_full()
-                        .p_0()
-                        .content_style(StyleRefinement::default().p_2())
-                        .child(
-                            v_flex()
-                                .w_full()
-                                .items_center()
-                                .py(px(crate::ui::memory_card::MEMORY_CARD_PY))
-                                .child(render_memory_card(
-                                    self.virtual_mem
-                                        .as_ref()
-                                        .expect("virtual card requires data"),
-                                    "virtual-memory",
-                                    false,
-                                    cx,
-                                )),
-                        )
-                }))
+                .child(div().flex_1().min_w_0().child(virtual_card))
                 .into_any_element()
         } else {
             h_flex()
@@ -1037,17 +1041,17 @@ impl Render for MemoryCleanerApp {
                         .bg(bg)
                         .child(render_title_bar(self, window, cx))
                         .child({
-                            let mut body = v_flex()
+                            let body = v_flex()
                                 .w_full()
                                 .flex_shrink_0()
                                 .px(px(CONTENT_PADDING))
                                 .pt(px(CONTENT_PADDING))
-                                .child(memory_row);
-                            if self.settings_expanded {
-                                body = body
-                                    .gap(px(SECTION_GAP))
-                                    .child(render_settings_content(self, cx));
-                            }
+                                .child(memory_row)
+                                .when(self.settings_expanded, |body| {
+                                    body.gap(px(SECTION_GAP))
+                                        .child(render_settings_content(self, cx))
+                                });
+
                             v_flex()
                                 .w_full()
                                 .flex_shrink_0()
