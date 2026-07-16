@@ -237,11 +237,6 @@ fn render_process_exclusion(
 ) -> impl IntoElement {
     let weak = cx.weak_entity();
     let excluded = app.settings.excluded_processes.clone();
-    let pick = app.process_exclusion_pick.clone();
-    let pick_label = pick
-        .clone()
-        .unwrap_or_else(|| t!("settings.process_exclusion_select").to_string());
-    let can_add = pick.is_some() && !app.is_optimizing;
     let selector_h = px(EXCLUSION_SELECTOR_H);
     let selector_w = px(process_exclusion_selector_width(
         MAIN_WINDOW_WIDTH,
@@ -251,90 +246,59 @@ fn render_process_exclusion(
     v_flex()
         .w_full()
         .gap(px(crate::ui::layout::EXCLUSION_FOOTER_GAP))
-        .child(
-            h_flex()
+        .child(div().w_full().child({
+            let weak = weak.clone();
+            Button::new("process-exclusion-select")
+                .outline()
+                .small()
                 .w_full()
-                .items_center()
-                .gap_3()
-                .child(div().flex_1().min_w_0().w_full().child({
-                    let weak = weak.clone();
-                    let pick = pick.clone();
-                    Button::new("process-exclusion-select")
-                        .outline()
-                        .small()
-                        .w_full()
-                        .h(selector_h)
-                        .when(app.is_optimizing, |this| this.disabled(true))
-                        .label(pick_label)
-                        .dropdown_caret(true)
-                        .dropdown_menu_with_anchor(Anchor::TopLeft, move |menu, _, cx| {
-                            let mut available = Vec::new();
-                            let _ = weak.update(cx, |app, _| {
-                                available = list_processes_for_exclusion_picker(
-                                    PROCESS_BASE_NAME,
-                                    &app.settings.excluded_processes,
-                                );
-                            });
+                .h(selector_h)
+                .when(app.is_optimizing, |this| this.disabled(true))
+                .label(t!("settings.process_exclusion_select").to_string())
+                .dropdown_caret(true)
+                .dropdown_menu_with_anchor(Anchor::TopLeft, move |menu, _, cx| {
+                    let mut available = Vec::new();
+                    let _ = weak.update(cx, |app, _| {
+                        available = list_processes_for_exclusion_picker(
+                            PROCESS_BASE_NAME,
+                            &app.settings.excluded_processes,
+                        );
+                    });
 
-                            let menu = available.iter().fold(menu, |menu, entry| {
-                                let name = entry.name.clone();
-                                let detail = process_picker_detail(entry);
-                                let checked = pick.as_deref() == Some(name.as_str());
-                                let weak = weak.clone();
-                                let label = name.clone();
-                                let detail_label = detail.clone();
-                                menu.item(
-                                    PopupMenuItem::element(move |_, cx| {
-                                        h_flex()
-                                            .w_full()
-                                            .items_center()
-                                            .justify_between()
-                                            .gap_2()
-                                            .child(Label::new(label.clone()).text_sm().truncate())
-                                            .child(
-                                                Label::new(detail_label.clone())
-                                                    .text_sm()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .flex_shrink_0(),
-                                            )
-                                    })
-                                    .checked(checked)
-                                    .on_click(
-                                        move |_, _, cx| {
-                                            let _ = weak.update(cx, |app, cx| {
-                                                app.set_process_exclusion_pick(
-                                                    Some(name.clone()),
-                                                    cx,
-                                                );
-                                            });
-                                        },
-                                    ),
-                                )
-                            });
-                            menu.scrollable(true)
-                                .max_h(px(PROCESS_PICKER_MENU_MAX_H))
-                                .min_w(selector_w)
-                                .max_w(selector_w)
-                        })
-                }))
-                .child({
-                    let mut button = Button::new("process-exclusion-add")
-                        .outline()
-                        .small()
-                        .flex_shrink_0()
-                        .w(selector_h)
-                        .h(selector_h)
-                        .tooltip(t!("settings.process_exclusion_add").to_string())
-                        .on_click(cx.listener(|app, _, _, cx| {
-                            app.add_excluded_process(cx);
-                        }))
-                        .child(Label::new("+").text_sm().font_weight(FontWeight::SEMIBOLD));
-                    if !can_add {
-                        button = button.disabled(true);
-                    }
-                    button
-                }),
-        )
+                    let menu = available.iter().fold(menu, |menu, entry| {
+                        let name = entry.name.clone();
+                        let detail = process_picker_detail(entry);
+                        let weak = weak.clone();
+                        let label = name.clone();
+                        let detail_label = detail.clone();
+                        menu.item(
+                            PopupMenuItem::element(move |_, cx| {
+                                h_flex()
+                                    .w_full()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_2()
+                                    .child(Label::new(label.clone()).text_sm().truncate())
+                                    .child(
+                                        Label::new(detail_label.clone())
+                                            .text_sm()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .flex_shrink_0(),
+                                    )
+                            })
+                            .on_click(move |_, _, cx| {
+                                let _ = weak.update(cx, |app, cx| {
+                                    app.add_excluded_process_by_name(&name, cx);
+                                });
+                            }),
+                        )
+                    });
+                    menu.scrollable(true)
+                        .max_h(px(PROCESS_PICKER_MENU_MAX_H))
+                        .min_w(selector_w)
+                        .max_w(selector_w)
+                })
+        }))
         .child(render_process_exclusion_list(app, &excluded, cx))
 }
 

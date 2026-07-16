@@ -14,6 +14,24 @@ use crate::version::PROCESS_BASE_NAME;
 
 const RUN_KEY_PATH: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
+/// Registry / CLI flag for silent login autostart (tray only, no main window).
+pub const STARTUP_ARG: &str = "--startup";
+
+pub fn is_startup_launch() -> bool {
+    std::env::args().any(|arg| arg == STARTUP_ARG)
+}
+
+/// Args passed to the elevated child so startup mode survives UAC relaunch.
+pub fn elevation_relaunch_args() -> String {
+    if is_startup_launch() {
+        format!("{ELEVATED_ARG} {STARTUP_ARG}")
+    } else {
+        ELEVATED_ARG.to_string()
+    }
+}
+
+const ELEVATED_ARG: &str = "--elevated";
+
 fn wide_null(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -30,11 +48,12 @@ fn win32_ok(status: windows::Win32::Foundation::WIN32_ERROR) -> Result<()> {
 pub fn startup_command() -> Result<String> {
     let exe = std::env::current_exe().context("current_exe unavailable")?;
     let path = exe.display().to_string();
-    Ok(if path.contains(' ') {
+    let exe_part = if path.contains(' ') {
         format!("\"{path}\"")
     } else {
         path
-    })
+    };
+    Ok(format!("{exe_part} {STARTUP_ARG}"))
 }
 
 pub fn is_enabled() -> bool {
@@ -145,14 +164,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn startup_command_quotes_paths_with_spaces() {
+    fn startup_command_includes_startup_flag() {
         let command = startup_command().expect("current_exe");
+        assert!(command.ends_with(STARTUP_ARG));
         let exe = std::env::current_exe().expect("current_exe");
         let path = exe.display().to_string();
         if path.contains(' ') {
-            assert_eq!(command, format!("\"{path}\""));
+            assert_eq!(command, format!("\"{path}\" {STARTUP_ARG}"));
         } else {
-            assert_eq!(command, path);
+            assert_eq!(command, format!("{path} {STARTUP_ARG}"));
         }
     }
 }

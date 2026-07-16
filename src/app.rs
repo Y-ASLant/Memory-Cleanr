@@ -67,16 +67,29 @@ pub fn open_main_window(
     cx: &mut AsyncApp,
     settings: Settings,
     tray_rx: std::sync::mpsc::Receiver<TrayCommand>,
+    launch_hidden: bool,
 ) -> Result<()> {
     let options = cx.update(|app| window_options(false, app));
     cx.open_window(options, |window, cx| {
         window.set_window_title(crate::version::APP_NAME);
 
-        let app_entity = cx.new(|cx| MemoryCleanerApp::new(window, cx, settings, tray_rx));
+        let app_entity =
+            cx.new(|cx| MemoryCleanerApp::new(window, cx, settings, tray_rx, launch_hidden));
         let _ = win32::window::remove_maximize_button(window);
         crate::ui::theme::init_light_theme(window, cx);
-        window.activate_window();
-        cx.new(|cx| Root::new(app_entity, window, cx))
+
+        let root = cx.new(|cx| Root::new(app_entity.clone(), window, cx));
+
+        if launch_hidden {
+            app_entity.update(cx, |app, _| {
+                app.destroy_window_to_tray(window, "startup");
+                app.sync_tray();
+            });
+        } else {
+            window.activate_window();
+        }
+
+        root
     })?;
     Ok(())
 }
@@ -134,7 +147,6 @@ pub struct MemoryCleanerApp {
     window_shown: bool,
     pub cleanup_hotkey_recording: bool,
     pub(crate) hotkey_capture_focus: FocusHandle,
-    pub process_exclusion_pick: Option<String>,
 }
 
 impl MemoryCleanerApp {
@@ -143,6 +155,7 @@ impl MemoryCleanerApp {
         cx: &mut Context<Self>,
         settings: Settings,
         tray_rx: std::sync::mpsc::Receiver<TrayCommand>,
+        launch_hidden: bool,
     ) -> Self {
         crate::log::set_debug_enabled(settings.debug_logging);
         if settings.debug_logging {
@@ -181,23 +194,22 @@ impl MemoryCleanerApp {
             optimize_has_errors: false,
             icon_cache_status: String::new(),
             settings_expanded: false,
-            window_shown: true,
+            window_shown: !launch_hidden,
             cleanup_hotkey_recording: false,
             hotkey_capture_focus: cx.focus_handle(),
-            process_exclusion_pick: None,
         };
 
         cx.set_global(AppEntityHolder(cx.entity()));
-        app.attach_window(window, cx);
+        app.attach_window(window, cx, launch_hidden);
         app.start_background_tasks(cx, tray_rx);
         app.sync_tray();
 
         app
     }
 
-    fn attach_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn attach_window(&mut self, window: &mut Window, cx: &mut Context<Self>, launch_hidden: bool) {
         self.window = Some(window.window_handle());
-        self.window_shown = true;
+        self.window_shown = !launch_hidden;
 
         let weak = cx.weak_entity();
         window.on_window_should_close(cx, move |window, gpui_app| {
@@ -218,7 +230,9 @@ impl MemoryCleanerApp {
             let _ = win32::window::set_always_on_top(window, true);
         }
 
-        self.start_memory_refresh(cx);
+        if !launch_hidden {
+            self.start_memory_refresh(cx);
+        }
     }
 
     fn pause_memory_refresh(&self) {
@@ -271,7 +285,7 @@ impl MemoryCleanerApp {
             let options = cx.update(|app| window_options(expanded, app));
             let opened = cx.open_window(options, |window, cx| {
                 entity.update(cx, |app, cx| {
-                    app.attach_window(window, cx);
+                    app.attach_window(window, cx, false);
                     app.window_opening = false;
                 });
                 window.set_window_title(crate::version::APP_NAME);
@@ -456,22 +470,11 @@ impl MemoryCleanerApp {
         cx.notify();
     }
 
-    pub fn set_process_exclusion_pick(&mut self, name: Option<String>, cx: &mut Context<Self>) {
+    pub fn add_excluded_process_by_name(&mut self, name: &str, cx: &mut Context<Self>) {
         if self.is_optimizing {
             return;
         }
-        self.process_exclusion_pick = name;
-        cx.notify();
-    }
-
-    pub fn add_excluded_process(&mut self, cx: &mut Context<Self>) {
-        if self.is_optimizing {
-            return;
-        }
-        let Some(name) = self.process_exclusion_pick.clone() else {
-            return;
-        };
-        let normalized = win32::process::normalize_process_name(&name);
+        let normalized = win32::process::normalize_process_name(name);
         if normalized.is_empty() {
             return;
         }
@@ -485,7 +488,6 @@ impl MemoryCleanerApp {
         }
         self.settings.excluded_processes.push(normalized);
         self.settings.excluded_processes.sort();
-        self.process_exclusion_pick = None;
         self.queue_settings_save(cx);
         cx.notify();
     }
@@ -498,9 +500,6 @@ impl MemoryCleanerApp {
         self.settings
             .excluded_processes
             .retain(|existing| existing != &normalized);
-        if self.process_exclusion_pick.as_deref() == Some(normalized.as_str()) {
-            self.process_exclusion_pick = None;
-        }
         self.queue_settings_save(cx);
         cx.notify();
     }

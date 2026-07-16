@@ -77,8 +77,8 @@ settings.run_at_startup:
   zh-CN: "开机自启"
   en: "Run at Startup"
 settings.run_at_startup_desc:
-  zh-CN: "登录 Windows 后自动启动 Memory Cleaner"
-  en: "Start Memory Cleaner automatically after you sign in to Windows"
+  zh-CN: "登录 Windows 后静默启动到系统托盘（不显示主窗口）"
+  en: "Start silently in the system tray after sign-in (no main window)"
 settings.optimization_notifications:
   zh-CN: "优化后通知"
   en: "Post-Optimization Notification"

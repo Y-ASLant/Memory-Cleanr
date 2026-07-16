@@ -65,7 +65,8 @@ fn ensure_elevated() {
         let exe = std::env::current_exe().expect("cannot determine exe path");
         let path: Vec<u16> = exe.as_os_str().encode_wide().chain(Some(0)).collect();
         let verb: Vec<u16> = "runas".encode_utf16().chain(Some(0)).collect();
-        let params: Vec<u16> = ELEVATED_ARG.encode_utf16().chain(Some(0)).collect();
+        let param_string = win32::startup::elevation_relaunch_args();
+        let params: Vec<u16> = param_string.encode_utf16().chain(Some(0)).collect();
 
         let h = ShellExecuteW(
             0,
@@ -101,6 +102,7 @@ fn main() {
     if let Err(error) = win32::startup::sync(&settings) {
         log_msg(&format!("[startup] sync failed: {error:#}"));
     }
+    let launch_hidden = win32::startup::is_startup_launch();
     locale::apply(&settings);
 
     if let Err(e) = win32::notification::init() {
@@ -134,7 +136,8 @@ fn main() {
         });
 
         cx.spawn(async move |cx| {
-            app::open_main_window(cx, settings, command_rx).expect("Failed to open window");
+            app::open_main_window(cx, settings, command_rx, launch_hidden)
+                .expect("Failed to open window");
         })
         .detach();
     });
