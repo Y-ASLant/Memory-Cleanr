@@ -399,9 +399,6 @@ impl MemoryCleanerApp {
         if let Some(handle) = self.window {
             match handle.update(cx, |_, window, _| window.remove_window()) {
                 Ok(()) => {
-                    self.window = None;
-                    self.window_shown = false;
-                    self.pause_memory_refresh();
                     crate::log_msg("[close] hide_to_tray destroy ok source=tray_menu");
                 }
                 Err(_) => crate::log_msg("[close] hide_to_tray handle update failed"),
@@ -409,6 +406,9 @@ impl MemoryCleanerApp {
         } else {
             crate::log_msg("[close] hide_to_tray no window handle");
         }
+        self.window = None;
+        self.window_shown = false;
+        self.pause_memory_refresh();
         self.sync_tray();
     }
 

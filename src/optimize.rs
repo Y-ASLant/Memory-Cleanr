@@ -204,8 +204,8 @@ fn optimize_system_file_cache() -> Result<()> {
         .context("System File Cache requires SeIncreaseQuotaPrivilege")?;
 
     let cache_info = SystemFileCacheInformation64 {
-        minimum_working_set: -1i64,
-        maximum_working_set: -1i64,
+        minimum_working_set: usize::MAX,
+        maximum_working_set: usize::MAX,
         ..Default::default()
     };
 
@@ -279,9 +279,6 @@ pub fn optimize_drive_cache(drive_letter: char) -> Result<()> {
     };
 
     let h = handle.context(format!("open volume {drive_letter}:"))?;
-    if h.is_invalid() {
-        bail!("invalid handle for volume {drive_letter}:");
-    }
 
     let flush_result = unsafe { FlushFileBuffers(h) };
     if flush_result.is_err() {
@@ -310,7 +307,8 @@ fn optimize_modified_file_cache() -> Result<()> {
     if failed.is_empty() {
         Ok(())
     } else {
-        bail!("驱动 {:?} 刷新失败", failed)
+        let drives: String = failed.iter().collect();
+        bail!(t!("optimize.drive_flush_failed", drives = drives))
     }
 }
 

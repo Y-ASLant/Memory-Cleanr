@@ -1,5 +1,4 @@
 use anyhow::{Result, bail};
-use windows::core::HRESULT;
 
 #[repr(u32)]
 #[derive(Clone, Copy)]
@@ -21,19 +20,20 @@ pub enum SystemMemoryListCommand {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct SystemFileCacheInformation64 {
-    pub current_size: u64,
-    pub peak_size: u64,
-    pub page_fault_count: u64,
-    pub minimum_working_set: i64,
-    pub maximum_working_set: i64,
-    pub current_size_in_pages: u64,
-    pub peak_size_in_pages: u64,
-    pub minimum_working_set_size: u64,
-    pub maximum_working_set_size: u64,
-    pub unused1: u64,
-    pub unused2: u64,
-    pub unused3: u64,
-    pub unused4: u64,
+    pub current_size: usize,
+    pub peak_size: usize,
+    pub page_fault_count: u32, // ULONG — must be 4 bytes, not 8
+    pub _pad: u32,             // explicit padding to align the following SIZE_T fields
+    pub minimum_working_set: usize,
+    pub maximum_working_set: usize,
+    pub current_size_in_pages: usize,
+    pub peak_size_in_pages: usize,
+    pub minimum_working_set_size: usize,
+    pub maximum_working_set_size: usize,
+    pub unused1: u32,
+    pub unused2: u32,
+    pub unused3: u32,
+    pub unused4: u32,
 }
 
 #[repr(C)]
@@ -66,7 +66,6 @@ pub unsafe fn nt_set_system_information(
     if status == 0 {
         Ok(())
     } else {
-        let hr = HRESULT::from_win32(status as u32);
-        bail!("NTSTATUS 0x{status:08X} ({hr})");
+        bail!("NTSTATUS 0x{status:08X}");
     }
 }

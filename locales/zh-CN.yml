@@ -152,6 +152,9 @@ optimize.step:
 optimize.step_with_progress:
   zh-CN: "正在清理 %{name} (%{drive}:) [%{current}/%{total}]..."
   en: "Cleaning %{name} (%{drive}:) [%{current}/%{total}]..."
+optimize.drive_flush_failed:
+  zh-CN: "驱动器 %{drives} 刷新失败"
+  en: "Drive(s) %{drives} flush failed"
 
 # Cleanup result messages
 cleanup.none:
