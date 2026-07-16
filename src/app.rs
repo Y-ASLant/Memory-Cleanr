@@ -505,13 +505,6 @@ impl MemoryCleanerApp {
         cx.notify();
     }
 
-    pub fn available_processes_for_exclusion(&self) -> Vec<win32::process::ProcessPickerEntry> {
-        win32::process::list_processes_for_exclusion_picker(
-            crate::version::PROCESS_BASE_NAME,
-            &self.settings.excluded_processes,
-        )
-    }
-
     pub fn open_window_behavior_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         use crate::ui::layout::{
             DIALOG_PADDING_HORIZONTAL, DIALOG_PADDING_TOP, WINDOW_BEHAVIOR_DIALOG_WIDTH,

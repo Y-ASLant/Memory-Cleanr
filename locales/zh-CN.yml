@@ -118,6 +118,9 @@ settings.process_exclusion_empty:
 settings.process_exclusion_picker_detail:
   zh-CN: "×%{count} · %{memory}"
   en: "×%{count} · %{memory}"
+settings.process_exclusion_picker_unknown:
+  zh-CN: "—"
+  en: "—"
 settings.language:
   zh-CN: "界面语言"
   en: "Interface Language"

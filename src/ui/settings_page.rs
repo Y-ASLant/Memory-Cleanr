@@ -18,21 +18,23 @@ use gpui_component::{
 use rust_i18n::t;
 
 use crate::app::MemoryCleanerApp;
-use crate::memory::MemoryStatus;
 use crate::optimize::MemoryAreas;
 use crate::ui::layout::{
     CLEANUP_BUTTON_H, EXCLUSION_LIST_PADDING, EXCLUSION_SELECTOR_H, EXCLUSION_TAG_GAP,
     MAIN_CONTENT_PADDING, MAIN_WINDOW_WIDTH, PROCESS_PICKER_MENU_MAX_H, SECTION_GAP,
     process_exclusion_list_max_height, process_exclusion_selector_width,
 };
+use crate::version::PROCESS_BASE_NAME;
 use crate::win32::hotkey::HotkeyBinding;
-use crate::win32::process::ProcessPickerEntry;
+use crate::win32::process::{ProcessPickerEntry, list_processes_for_exclusion_picker};
 
 const ROW_GAP: f32 = 6.;
 const BUTTON_STATUS_TRUNCATE_CHARS: usize = 24;
 
 fn process_picker_detail(entry: &ProcessPickerEntry) -> String {
-    let memory = MemoryStatus::format_bytes(entry.working_set_bytes);
+    let memory = entry
+        .memory_display()
+        .unwrap_or_else(|| t!("settings.process_exclusion_picker_unknown").to_string());
     if entry.instance_count > 1 {
         t!(
             "settings.process_exclusion_picker_detail",
@@ -235,7 +237,6 @@ fn render_process_exclusion(
 ) -> impl IntoElement {
     let weak = cx.weak_entity();
     let excluded = app.settings.excluded_processes.clone();
-    let available = app.available_processes_for_exclusion();
     let pick = app.process_exclusion_pick.clone();
     let pick_label = pick
         .clone()
@@ -250,7 +251,6 @@ fn render_process_exclusion(
     v_flex()
         .w_full()
         .gap(px(crate::ui::layout::EXCLUSION_FOOTER_GAP))
-        .child(render_process_exclusion_list(app, &excluded, cx))
         .child(
             h_flex()
                 .w_full()
@@ -258,7 +258,6 @@ fn render_process_exclusion(
                 .gap_3()
                 .child(div().flex_1().min_w_0().w_full().child({
                     let weak = weak.clone();
-                    let available = available.clone();
                     let pick = pick.clone();
                     Button::new("process-exclusion-select")
                         .outline()
@@ -268,7 +267,15 @@ fn render_process_exclusion(
                         .when(app.is_optimizing, |this| this.disabled(true))
                         .label(pick_label)
                         .dropdown_caret(true)
-                        .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, _, _| {
+                        .dropdown_menu_with_anchor(Anchor::TopLeft, move |menu, _, cx| {
+                            let mut available = Vec::new();
+                            let _ = weak.update(cx, |app, _| {
+                                available = list_processes_for_exclusion_picker(
+                                    PROCESS_BASE_NAME,
+                                    &app.settings.excluded_processes,
+                                );
+                            });
+
                             let menu = available.iter().fold(menu, |menu, entry| {
                                 let name = entry.name.clone();
                                 let detail = process_picker_detail(entry);
@@ -328,6 +335,7 @@ fn render_process_exclusion(
                     button
                 }),
         )
+        .child(render_process_exclusion_list(app, &excluded, cx))
 }
 
 struct SwitchRowConfig {

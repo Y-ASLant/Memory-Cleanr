@@ -51,7 +51,7 @@ pub fn cleanup_section_height() -> f32 {
     );
     let exclusion_list = process_exclusion_list_max_height();
     let process_exclusion =
-        section_card_height(exclusion_list + EXCLUSION_FOOTER_GAP + EXCLUSION_SELECTOR_H);
+        section_card_height(EXCLUSION_SELECTOR_H + EXCLUSION_FOOTER_GAP + exclusion_list);
 
     process_exclusion + SECTION_GAP + cleanup_areas
 }
@@ -69,8 +69,8 @@ pub fn process_exclusion_list_max_height() -> f32 {
     process_exclusion_list_inner_height() + EXCLUSION_LIST_PADDING * 2.
 }
 
-/// 进程下拉菜单最大高度（向上展开，避免遮挡下方控件）。
-pub const PROCESS_PICKER_MENU_MAX_H: f32 = 288.;
+/// 进程下拉菜单最大高度（向下展开，滚动条保持在菜单内部）。
+pub const PROCESS_PICKER_MENU_MAX_H: f32 = 300.;
 
 /// 主窗口固定宽度（与 `app.rs` 中 `WINDOW_WIDTH` 保持一致）。
 pub const MAIN_WINDOW_WIDTH: f32 = 520.;

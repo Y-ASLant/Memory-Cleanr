@@ -11,9 +11,11 @@ use windows::Win32::System::ProcessStatus::{
     GetProcessMemoryInfo, K32EmptyWorkingSet, PROCESS_MEMORY_COUNTERS,
 };
 use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_SET_QUOTA, PROCESS_TERMINATE, PROCESS_VM_READ,
-    TerminateProcess,
+    OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA,
+    PROCESS_TERMINATE, TerminateProcess,
 };
+
+use crate::memory::MemoryStatus;
 
 /// Running process entry for the exclusion picker dropdown.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,6 +23,18 @@ pub struct ProcessPickerEntry {
     pub name: String,
     pub instance_count: u32,
     pub working_set_bytes: u64,
+    /// How many instances returned a readable working-set size.
+    pub memory_readable_count: u32,
+}
+
+impl ProcessPickerEntry {
+    pub fn memory_display(&self) -> Option<String> {
+        if self.memory_readable_count == 0 {
+            None
+        } else {
+            Some(MemoryStatus::format_bytes(self.working_set_bytes))
+        }
+    }
 }
 
 /// Processes that should not appear in the exclusion picker.
@@ -28,11 +42,12 @@ fn is_picker_hidden_process(name: &str) -> bool {
     matches!(name, "[systemprocess]" | "systemidleprocess")
 }
 
-fn query_process_working_set_bytes(pid: u32) -> u64 {
+fn query_process_working_set_bytes(pid: u32) -> Option<u64> {
     unsafe {
-        let handle = match OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) {
+        let access = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_QUERY_INFORMATION;
+        let handle = match OpenProcess(access, false, pid) {
             Ok(handle) => handle,
-            Err(_) => return 0,
+            Err(_) => return None,
         };
 
         let mut counters = PROCESS_MEMORY_COUNTERS::default();
@@ -45,9 +60,9 @@ fn query_process_working_set_bytes(pid: u32) -> u64 {
         let _ = CloseHandle(handle);
 
         if ok {
-            counters.WorkingSetSize as u64
+            Some(counters.WorkingSetSize as u64)
         } else {
-            0
+            None
         }
     }
 }
@@ -129,12 +144,16 @@ pub fn list_processes_for_exclusion_picker(
             .entry(name.clone())
             .and_modify(|item| {
                 item.instance_count += 1;
-                item.working_set_bytes = item.working_set_bytes.saturating_add(working_set);
+                if let Some(bytes) = working_set {
+                    item.memory_readable_count += 1;
+                    item.working_set_bytes = item.working_set_bytes.saturating_add(bytes);
+                }
             })
             .or_insert(ProcessPickerEntry {
                 name,
                 instance_count: 1,
-                working_set_bytes: working_set,
+                working_set_bytes: working_set.unwrap_or(0),
+                memory_readable_count: u32::from(working_set.is_some()),
             });
         false
     });
@@ -276,5 +295,27 @@ mod tests {
         assert!(is_picker_hidden_process("[systemprocess]"));
         assert!(is_picker_hidden_process("systemidleprocess"));
         assert!(!is_picker_hidden_process("chrome"));
+    }
+
+    #[test]
+    fn process_picker_entry_memory_display() {
+        let unknown = ProcessPickerEntry {
+            name: "lsass".to_string(),
+            instance_count: 1,
+            working_set_bytes: 0,
+            memory_readable_count: 0,
+        };
+        assert_eq!(unknown.memory_display(), None);
+
+        let readable = ProcessPickerEntry {
+            name: "chrome".to_string(),
+            instance_count: 2,
+            working_set_bytes: 512 * 1024 * 1024,
+            memory_readable_count: 2,
+        };
+        assert_eq!(
+            readable.memory_display(),
+            Some(MemoryStatus::format_bytes(readable.working_set_bytes))
+        );
     }
 }
