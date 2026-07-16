@@ -741,8 +741,8 @@ impl MemoryCleanerApp {
         let step_span = 1.0 / total_steps as f32;
         let name = MemoryAreas::MODIFIED_FILE_CACHE.label();
 
-        let drives = match smol::unblock(optimize::fixed_drives).await {
-            drives if drives.is_empty() => {
+        let volumes = match smol::unblock(optimize::list_volume_flush_targets).await {
+            Ok(targets) if targets.is_empty() => {
                 let _ = this.update(cx, |app, cx| {
                     app.optimize_step = t!("optimize.step", name = name.clone()).to_string();
                     app.optimize_percent = (step_base + step_span) * 100.0;
@@ -750,44 +750,61 @@ impl MemoryCleanerApp {
                 });
                 return true;
             }
-            drives => drives,
+            Ok(targets) => targets,
+            Err(e) => {
+                crate::log::write(&format!(
+                    "[optimize] modified file cache volume enumeration failed: {e:#}"
+                ));
+                let _ = this.update(cx, |app, cx| {
+                    app.optimize_step = t!("optimize.step", name = name.clone()).to_string();
+                    app.optimize_percent = (step_base + step_span) * 100.0;
+                    cx.notify();
+                });
+                return false;
+            }
         };
 
-        let drive_total = drives.len();
+        let volume_total = volumes.len();
         let mut failed = Vec::new();
+        let mut succeeded = 0usize;
 
-        for (drive_index, drive) in drives.into_iter().enumerate() {
-            let sub_base = drive_index as f32 / drive_total as f32;
+        for (volume_index, target) in volumes.into_iter().enumerate() {
+            let sub_base = volume_index as f32 / volume_total as f32;
+            let volume_label = target.label.clone();
 
             let _ = this.update(cx, |app, cx| {
                 app.optimize_step = t!(
                     "optimize.step_with_progress",
                     name = name.clone(),
-                    drive = drive.to_string(),
-                    current = (drive_index + 1).to_string(),
-                    total = drive_total.to_string()
+                    volume = volume_label.clone(),
+                    current = (volume_index + 1).to_string(),
+                    total = volume_total.to_string()
                 )
                 .to_string();
                 app.optimize_percent = (step_base + sub_base * step_span) * 100.0;
                 cx.notify();
             });
 
-            let drive_result = smol::unblock(move || optimize::optimize_drive_cache(drive)).await;
-            if let Err(e) = drive_result {
-                crate::log::write(&format!(
-                    "[optimize] modified file cache drive {drive}: failed: {e:#}"
-                ));
-                failed.push(drive);
+            let volume_result = smol::unblock(move || optimize::flush_volume_cache(&target)).await;
+            match volume_result {
+                Ok(()) => succeeded += 1,
+                Err(e) => {
+                    crate::log::write(&format!(
+                        "[optimize] modified file cache volume {volume_label}: failed: {e:#}"
+                    ));
+                    failed.push(volume_label);
+                }
             }
 
             let _ = this.update(cx, |app, cx| {
-                app.optimize_percent =
-                    (step_base + (drive_index + 1) as f32 / drive_total as f32 * step_span) * 100.0;
+                app.optimize_percent = (step_base
+                    + (volume_index + 1) as f32 / volume_total as f32 * step_span)
+                    * 100.0;
                 cx.notify();
             });
         }
 
-        failed.is_empty()
+        succeeded > 0
     }
 
     pub fn run_optimize(&mut self, cx: &mut Context<Self>) {

@@ -5,4 +5,5 @@ pub mod os;
 pub mod process;
 pub mod single_instance;
 pub mod startup;
+pub mod volume;
 pub mod window;

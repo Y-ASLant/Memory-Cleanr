@@ -1,12 +1,6 @@
 use rust_i18n::t;
 
 use anyhow::{Context, Result, bail};
-use windows::Win32::Foundation::CloseHandle;
-use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, GetLastError};
-use windows::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, FlushFileBuffers,
-    OPEN_EXISTING,
-};
 use windows::Win32::System::Memory::SetSystemFileCacheSize;
 
 use crate::privileges::enable_privilege;
@@ -262,53 +256,30 @@ fn optimize_combined_page_list() -> Result<()> {
     Ok(())
 }
 
-pub fn optimize_drive_cache(drive_letter: char) -> Result<()> {
-    let path = format!("\\\\.\\{}:", drive_letter);
-    let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
-
-    let handle = unsafe {
-        CreateFileW(
-            windows::core::PCWSTR(wide.as_ptr()),
-            (GENERIC_READ | GENERIC_WRITE).0,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            None,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            None,
-        )
-    };
-
-    let h = handle.context(format!("open volume {drive_letter}:"))?;
-
-    let flush_result = unsafe { FlushFileBuffers(h) };
-    if flush_result.is_err() {
-        let last_error = unsafe { GetLastError() };
-        unsafe {
-            let _ = CloseHandle(h);
-        }
-        bail!("FlushFileBuffers on volume {drive_letter}: failed ({last_error:?})");
-    }
-    unsafe {
-        let _ = CloseHandle(h);
-    }
-
-    Ok(())
-}
+pub use crate::win32::volume::{VolumeFlushTarget, flush_volume_cache, list_volume_flush_targets};
 
 fn optimize_modified_file_cache() -> Result<()> {
-    // Fallback when not using app per-drive progress UI.
+    // Fallback when not using app per-volume progress UI.
+    let targets = list_volume_flush_targets()?;
+    if targets.is_empty() {
+        return Ok(());
+    }
+
     let mut failed = Vec::new();
-    for drive_letter in fixed_drives() {
-        if optimize_drive_cache(drive_letter).is_err() {
-            failed.push(drive_letter);
+    let mut succeeded = 0usize;
+    for target in &targets {
+        if flush_volume_cache(target).is_ok() {
+            succeeded += 1;
+        } else {
+            failed.push(target.label.clone());
         }
     }
 
-    if failed.is_empty() {
+    if succeeded > 0 {
         Ok(())
     } else {
-        let drives: String = failed.iter().collect();
-        bail!(t!("optimize.drive_flush_failed", drives = drives))
+        let volumes = failed.join(", ");
+        bail!(t!("optimize.volume_flush_failed", volumes = volumes))
     }
 }
 
@@ -330,19 +301,4 @@ fn optimize_registry_cache() -> Result<()> {
     }
 
     Ok(())
-}
-
-pub fn fixed_drives() -> Vec<char> {
-    let mut drives = Vec::new();
-    for letter in b'A'..=b'Z' {
-        let path = format!("{}:\\", letter as char);
-        let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
-        let drive_type = unsafe {
-            windows::Win32::Storage::FileSystem::GetDriveTypeW(windows::core::PCWSTR(wide.as_ptr()))
-        };
-        if drive_type == 3u32 {
-            drives.push(letter as char);
-        }
-    }
-    drives
 }
