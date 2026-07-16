@@ -36,7 +36,7 @@ const SINGLE_CARD_MAX_WIDTH: f32 = 360.;
 
 pub fn window_size(expanded: bool) -> Size<Pixels> {
     let height = if expanded {
-        crate::ui::layout::expanded_window_height()
+        crate::ui::layout::expanded_window_height(CONTENT_PADDING)
     } else {
         crate::ui::layout::collapsed_window_height(CONTENT_PADDING)
     };

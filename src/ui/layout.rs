@@ -19,14 +19,14 @@ const SECTION_TITLE_H: f32 = 20.;
 const HINT_H: f32 = 24.;
 const CHECKBOX_ROW_H: f32 = 22.;
 const CLEANUP_ROWS: f32 = 4.;
-/// 进程排除列表固定可视行数（超出后内部滚动）。
-pub const EXCLUSION_LIST_MAX_ROWS: f32 = 5.;
-pub const EXCLUSION_ROW_HEIGHT: f32 = 26.;
-pub const EXCLUSION_LIST_ROW_GAP: f32 = 4.;
-pub const EXCLUSION_LIST_PADDING: f32 = 4.;
+/// Small outline Tag 行高（与 gpui-component `Tag::small` 一致）。
+pub const EXCLUSION_TAG_ROW_HEIGHT: f32 = 26.;
+/// 标签 flex_wrap 间距（横/纵）。
+pub const EXCLUSION_TAG_GAP: f32 = 6.;
+pub const EXCLUSION_TAG_VISIBLE_ROWS: f32 = 3.;
+pub const EXCLUSION_LIST_PADDING: f32 = 6.;
 pub const EXCLUSION_FOOTER_GAP: f32 = 6.;
 pub const EXCLUSION_SELECTOR_H: f32 = 32.;
-const EXCLUSION_EMPTY_H: f32 = 24.;
 /// 提示条 + 4 行 checkbox 共 5 项，`v_flex().gap(6)` 产生 4 个间距。
 const CLEANUP_ROW_GAPS: f32 = SECTION_GAP * CLEANUP_ROWS;
 /// 折叠窗口高度略偏低时会裁切 footer 底边距，补回至 6px。
@@ -60,14 +60,13 @@ fn section_card_height(body: f32) -> f32 {
     CARD_BORDER + GROUP_BOX_OUTLINE_PADDING_V + SECTION_TITLE_H + SECTION_GAP + body
 }
 
+fn process_exclusion_list_inner_height() -> f32 {
+    EXCLUSION_TAG_ROW_HEIGHT * EXCLUSION_TAG_VISIBLE_ROWS
+        + EXCLUSION_TAG_GAP * (EXCLUSION_TAG_VISIBLE_ROWS - 1.)
+}
+
 pub fn process_exclusion_list_max_height() -> f32 {
-    let rows = if EXCLUSION_LIST_MAX_ROWS <= 0. {
-        EXCLUSION_EMPTY_H
-    } else {
-        EXCLUSION_ROW_HEIGHT * EXCLUSION_LIST_MAX_ROWS
-            + EXCLUSION_LIST_ROW_GAP * (EXCLUSION_LIST_MAX_ROWS - 1.)
-    };
-    rows + EXCLUSION_LIST_PADDING * 2.
+    process_exclusion_list_inner_height() + EXCLUSION_LIST_PADDING * 2.
 }
 
 /// 进程下拉菜单最大高度（向上展开，避免遮挡下方控件）。
@@ -83,8 +82,8 @@ pub fn collapsed_window_height(content_padding: f32) -> f32 {
         + COLLAPSED_FOOTER_PADDING_GUARD
 }
 
-pub fn expanded_window_height() -> f32 {
-    680.
+pub fn expanded_window_height(_content_padding: f32) -> f32 {
+    630.
 }
 
 #[cfg(test)]
@@ -94,7 +93,19 @@ mod tests {
     #[test]
     fn expanded_window_is_taller_than_collapsed() {
         let collapsed = collapsed_window_height(6.);
-        let expanded = expanded_window_height();
+        let expanded = expanded_window_height(6.);
         assert!(expanded > collapsed);
+    }
+
+    #[test]
+    fn process_exclusion_list_fits_three_tag_rows() {
+        let inner = process_exclusion_list_inner_height();
+        let total = process_exclusion_list_max_height();
+        assert_eq!(
+            inner,
+            EXCLUSION_TAG_ROW_HEIGHT * 3. + EXCLUSION_TAG_GAP * 2.
+        );
+        assert_eq!(total, inner + EXCLUSION_LIST_PADDING * 2.);
+        assert_eq!(total, 102.);
     }
 }

@@ -12,6 +12,7 @@ use gpui_component::{
     progress::ProgressCircle,
     scroll::ScrollableElement as _,
     switch::Switch,
+    tag::Tag,
     v_flex,
 };
 use rust_i18n::t;
@@ -19,13 +20,11 @@ use rust_i18n::t;
 use crate::app::MemoryCleanerApp;
 use crate::optimize::MemoryAreas;
 use crate::ui::layout::{
-    CLEANUP_BUTTON_H, EXCLUSION_LIST_PADDING, EXCLUSION_LIST_ROW_GAP, EXCLUSION_ROW_HEIGHT,
-    EXCLUSION_SELECTOR_H, PROCESS_PICKER_MENU_MAX_H, SECTION_GAP,
-    process_exclusion_list_max_height,
+    CLEANUP_BUTTON_H, EXCLUSION_LIST_PADDING, EXCLUSION_SELECTOR_H, EXCLUSION_TAG_GAP,
+    PROCESS_PICKER_MENU_MAX_H, SECTION_GAP, process_exclusion_list_max_height,
 };
 use crate::win32::hotkey::HotkeyBinding;
 
-const EXCLUSION_REMOVE_BTN: f32 = 22.;
 const ROW_GAP: f32 = 6.;
 const BUTTON_STATUS_TRUNCATE_CHARS: usize = 24;
 
@@ -132,7 +131,7 @@ fn render_cleanup_areas(
         ))
 }
 
-fn render_process_exclusion_row(
+fn render_process_exclusion_tag(
     index: usize,
     name: &str,
     app: &MemoryCleanerApp,
@@ -140,49 +139,28 @@ fn render_process_exclusion_row(
 ) -> impl IntoElement {
     let name = name.to_string();
     let remove_id = SharedString::from(format!("process-exclusion-remove-{index}"));
-    let label = name.clone();
-    let theme = cx.theme();
+    let muted = cx.theme().muted_foreground;
 
-    h_flex()
-        .w_full()
-        .h(px(EXCLUSION_ROW_HEIGHT))
-        .flex_shrink_0()
-        .items_center()
-        .gap_3()
-        .px_2()
-        .child(
-            Label::new(label)
-                .text_sm()
-                .text_color(theme.foreground)
-                .flex_1()
-                .min_w_0()
-                .truncate(),
-        )
-        .child({
+    Tag::secondary()
+        .outline()
+        .small()
+        .rounded(cx.theme().radius)
+        .child(h_flex().items_center().gap_1().child(name.clone()).child({
             let name = name.clone();
             let mut button = Button::new(remove_id)
                 .ghost()
-                .small()
+                .xsmall()
                 .flex_shrink_0()
-                .w(px(EXCLUSION_REMOVE_BTN))
-                .h(px(EXCLUSION_REMOVE_BTN))
                 .tooltip(t!("settings.process_exclusion_remove").to_string())
                 .on_click(cx.listener(move |app, _, _, cx| {
                     app.remove_excluded_process(&name, cx);
                 }))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_color(theme.danger)
-                        .child(Icon::new(IconName::CircleX).small()),
-                );
+                .icon(Icon::new(IconName::CircleX).xsmall().text_color(muted));
             if app.is_optimizing {
                 button = button.disabled(true);
             }
             button
-        })
+        }))
 }
 
 fn render_process_exclusion_list(
@@ -191,44 +169,47 @@ fn render_process_exclusion_list(
     cx: &mut Context<MemoryCleanerApp>,
 ) -> impl IntoElement {
     let list_height = process_exclusion_list_max_height();
-    // Extract theme values before the mutable borrow of cx in the loop.
-    let radius = cx.theme().radius;
     let border = cx.theme().border;
     let muted_fg = cx.theme().muted_foreground;
     let empty_fg = cx.theme().foreground.opacity(0.55);
 
-    let mut list = v_flex().w_full().gap(px(EXCLUSION_LIST_ROW_GAP));
-    if excluded.is_empty() {
-        list = list.child(
-            div()
-                .w_full()
-                .h_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    Label::new(t!("settings.process_exclusion_empty").to_string())
-                        .text_sm()
-                        .text_color(empty_fg),
-                ),
-        );
+    let content = if excluded.is_empty() {
+        div()
+            .w_full()
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                Label::new(t!("settings.process_exclusion_empty").to_string())
+                    .text_sm()
+                    .text_color(empty_fg),
+            )
+            .into_any_element()
     } else {
-        for (index, name) in excluded.iter().enumerate() {
-            list = list.child(render_process_exclusion_row(index, name, app, cx));
-        }
-    }
+        excluded
+            .iter()
+            .enumerate()
+            .fold(
+                h_flex().w_full().flex_wrap().gap(px(EXCLUSION_TAG_GAP)),
+                |tags, (index, name)| {
+                    tags.child(render_process_exclusion_tag(index, name, app, cx))
+                },
+            )
+            .into_any_element()
+    };
 
     div()
         .id("process-exclusion-list")
         .w_full()
         .h(px(list_height))
-        .rounded(radius)
+        .rounded(cx.theme().radius)
         .border_1()
         .border_color(border)
         .bg(muted_fg.opacity(0.06))
         .p(px(EXCLUSION_LIST_PADDING))
         .overflow_y_scrollbar()
-        .child(list)
+        .child(content)
 }
 
 fn render_process_exclusion(
@@ -254,45 +235,39 @@ fn render_process_exclusion(
                 .w_full()
                 .items_center()
                 .gap_3()
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
+                .child(div().flex_1().min_w_0().w_full().child({
+                    let weak = weak.clone();
+                    let available = available.clone();
+                    let pick = pick.clone();
+                    Button::new("process-exclusion-select")
+                        .outline()
+                        .small()
                         .w_full()
-                        .child({
-                            let weak = weak.clone();
-                            let available = available.clone();
-                            let pick = pick.clone();
-                            Button::new("process-exclusion-select")
-                                .outline()
-                                .small()
-                                .w_full()
-                                .h(selector_h)
-                                .when(app.is_optimizing, |this| this.disabled(true))
-                                .label(pick_label)
-                                .dropdown_caret(true)
-                                .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, _, _| {
-                                    let menu = available.iter().fold(menu, |menu, name| {
-                                        let name = name.clone();
-                                        let checked = pick.as_deref() == Some(name.as_str());
-                                        let weak = weak.clone();
-                                        menu.item(
-                                            PopupMenuItem::new(name.clone()).checked(checked).on_click(
-                                                move |_, _, cx| {
-                                                    let _ = weak.update(cx, |app, cx| {
-                                                        app.set_process_exclusion_pick(
-                                                            Some(name.clone()),
-                                                            cx,
-                                                        );
-                                                    });
-                                                },
-                                            ),
-                                        )
-                                    });
-                                    menu.scrollable(true).max_h(px(PROCESS_PICKER_MENU_MAX_H))
-                                })
-                        }),
-                )
+                        .h(selector_h)
+                        .when(app.is_optimizing, |this| this.disabled(true))
+                        .label(pick_label)
+                        .dropdown_caret(true)
+                        .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, _, _| {
+                            let menu = available.iter().fold(menu, |menu, name| {
+                                let name = name.clone();
+                                let checked = pick.as_deref() == Some(name.as_str());
+                                let weak = weak.clone();
+                                menu.item(
+                                    PopupMenuItem::new(name.clone()).checked(checked).on_click(
+                                        move |_, _, cx| {
+                                            let _ = weak.update(cx, |app, cx| {
+                                                app.set_process_exclusion_pick(
+                                                    Some(name.clone()),
+                                                    cx,
+                                                );
+                                            });
+                                        },
+                                    ),
+                                )
+                            });
+                            menu.scrollable(true).max_h(px(PROCESS_PICKER_MENU_MAX_H))
+                        })
+                }))
                 .child({
                     let mut button = Button::new("process-exclusion-add")
                         .outline()
