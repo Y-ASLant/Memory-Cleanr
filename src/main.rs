@@ -98,6 +98,9 @@ fn main() {
     }
 
     let settings = Settings::load();
+    if let Err(error) = win32::startup::sync(&settings) {
+        log_msg(&format!("[startup] sync failed: {error:#}"));
+    }
     locale::apply(&settings);
 
     if let Err(e) = win32::notification::init() {

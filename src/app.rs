@@ -557,6 +557,19 @@ impl MemoryCleanerApp {
         cx.notify();
     }
 
+    pub fn set_run_at_startup(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if let Err(error) = win32::startup::set_enabled(enabled) {
+            crate::log_msg(&format!(
+                "[startup] set_enabled({enabled}) failed: {error:#}"
+            ));
+            cx.notify();
+            return;
+        }
+        self.settings.run_at_startup = enabled;
+        self.queue_settings_save(cx);
+        cx.notify();
+    }
+
     pub fn set_show_optimization_notifications(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.settings.show_optimization_notifications = enabled;
         self.queue_settings_save(cx);

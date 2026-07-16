@@ -759,6 +759,25 @@ pub fn render_window_behavior_dialog(
         ))
         .child(switch_row_app(
             SwitchRowConfig {
+                id: "dialog-switch-run-at-startup",
+                icon: IconName::Play,
+                title: t!("settings.run_at_startup").to_string(),
+                description: t!("settings.run_at_startup_desc").to_string(),
+                checked: settings.run_at_startup,
+            },
+            muted,
+            foreground,
+            {
+                let weak = weak.clone();
+                move |checked, _window, cx| {
+                    let _ = weak.update(cx, |app, cx| {
+                        app.set_run_at_startup(*checked, cx);
+                    });
+                }
+            },
+        ))
+        .child(switch_row_app(
+            SwitchRowConfig {
                 id: "dialog-switch-optimization-notifications",
                 icon: IconName::Bell,
                 title: t!("settings.optimization_notifications").to_string(),

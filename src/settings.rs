@@ -6,6 +6,8 @@ use std::path::PathBuf;
 #[serde(default)]
 pub struct Settings {
     pub always_on_top: bool,
+    /// Launch with Windows via the current-user Run registry key.
+    pub run_at_startup: bool,
     pub close_to_notification_area: bool,
     pub show_virtual_memory: bool,
     pub memory_areas: u32,
@@ -35,6 +37,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             always_on_top: false,
+            run_at_startup: false,
             auto_optimization_interval: 0,
             auto_optimization_memory_usage: 0,
             close_to_notification_area: true,
@@ -194,6 +197,7 @@ mod tests {
     fn default_settings_match_documented_values() {
         let settings = Settings::default();
         assert!(settings.close_to_notification_area);
+        assert!(!settings.run_at_startup);
         assert!(settings.show_virtual_memory);
         assert!(settings.show_optimization_notifications);
         assert_eq!(settings.memory_areas, MemoryAreas::DEFAULT.bits());

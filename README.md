@@ -1,5 +1,8 @@
-# Memory Cleanr
+<p align="center">
+  <img src="App.png" alt="Memory Cleanr" width="128" />
+</p>
 
+# Memory Cleanr
 Windows 内存清理工具，基于 Rust + GPUI 构建。提供实时内存监控、可配置的清理区域、系统托盘常驻、全局快捷键，以及一键优化。
 
 ## 功能

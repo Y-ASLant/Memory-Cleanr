@@ -64,7 +64,7 @@ windows = { version = "0.62", features = [
 [profile.release]
 strip = true
 lto = true
-opt-level = "z"
+opt-level = "s"
 codegen-units = 1
 panic = "abort"
 
