@@ -274,13 +274,121 @@ pub fn wait_for_elevated_relaunch(current_pid: u32, exe_name: &str, timeout_ms: 
     false
 }
 
-/// Spawn a fresh GUI instance and terminate this tray process.
-pub fn relaunch_gui_and_exit() -> ! {
-    crate::log_msg("[tray] relaunching GUI instance");
-    if let Err(error) = spawn_gui_instance() {
-        crate::log_msg(&format!("[tray] GUI relaunch failed: {error:#}"));
+/// Ensure the persistent tray-host process is running.
+pub fn ensure_tray_host_running() -> Result<()> {
+    if crate::win32::single_instance::is_tray_running() {
+        return Ok(());
     }
-    exit_process();
+
+    spawn_tray_instance()?;
+    if crate::win32::ipc::wait_tray_ready(crate::win32::ipc::TRAY_READY_WAIT_MS) {
+        return Ok(());
+    }
+    if !crate::win32::single_instance::wait_for_tray_host(
+        crate::win32::single_instance::TRAY_WAIT_MS,
+    ) {
+        bail!("tray host failed to start within timeout");
+    }
+    Ok(())
+}
+
+/// Activate an existing GUI window or spawn a new GUI process.
+pub fn activate_or_spawn_gui() -> Result<()> {
+    if let Some(session) = crate::win32::ipc::gui_session() {
+        if !crate::win32::window::activate_hwnd(session.hwnd) {
+            crate::log_msg("[tray] registered GUI hwnd is no longer valid");
+        }
+        return Ok(());
+    }
+
+    if crate::win32::single_instance::is_gui_running() {
+        if !crate::win32::window::activate_gui_window() {
+            crate::log_msg("[tray] GUI running but window not registered yet");
+        }
+        return Ok(());
+    }
+
+    spawn_gui_instance()
+}
+
+/// Toggle the GUI window: spawn, hide via close, or activate.
+pub fn toggle_gui_window() -> Result<()> {
+    if let Some(session) = crate::win32::ipc::gui_session() {
+        if crate::win32::window::is_hwnd_visible(session.hwnd) {
+            if !crate::win32::window::request_hwnd_close(session.hwnd) {
+                crate::log_msg("[tray] failed to request GUI close");
+            }
+        } else if !crate::win32::window::activate_hwnd(session.hwnd) {
+            crate::log_msg("[tray] failed to activate hidden GUI window");
+        }
+        return Ok(());
+    }
+
+    if crate::win32::single_instance::is_gui_running() {
+        if crate::win32::window::is_gui_window_visible() {
+            if !crate::win32::window::request_gui_close() {
+                crate::log_msg("[tray] failed to request GUI close");
+            }
+        } else if !crate::win32::window::activate_gui_window() {
+            crate::log_msg("[tray] failed to activate hidden GUI window");
+        }
+        return Ok(());
+    }
+
+    spawn_gui_instance()
+}
+
+fn is_process_alive(pid: u32) -> bool {
+    unsafe {
+        match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            Ok(handle) => {
+                let _ = CloseHandle(handle);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+}
+
+/// Terminate a single process by PID.
+pub fn terminate_process_pid(pid: u32) -> Result<()> {
+    unsafe {
+        let handle = OpenProcess(PROCESS_TERMINATE, false, pid).context("OpenProcess")?;
+        TerminateProcess(handle, 1).context("TerminateProcess")?;
+        let _ = CloseHandle(handle);
+    }
+    Ok(())
+}
+
+/// Ask a running GUI process to exit before the tray host shuts down.
+pub fn request_gui_shutdown() {
+    if let Some(session) = crate::win32::ipc::gui_session() {
+        let _ = crate::win32::window::request_hwnd_close(session.hwnd);
+        if crate::win32::single_instance::wait_for_gui_exit(
+            crate::win32::single_instance::GUI_EXIT_WAIT_MS,
+        ) {
+            crate::win32::ipc::set_gui_session(None);
+            return;
+        }
+        if (crate::win32::single_instance::is_gui_running() || is_process_alive(session.pid))
+            && let Err(error) = terminate_process_pid(session.pid)
+        {
+            crate::log_msg(&format!("[tray] terminate GUI failed: {error:#}"));
+        }
+        crate::win32::ipc::set_gui_session(None);
+        return;
+    }
+
+    if !crate::win32::single_instance::is_gui_running() {
+        return;
+    }
+
+    let _ = crate::win32::window::request_gui_close();
+    if !crate::win32::single_instance::wait_for_gui_exit(
+        crate::win32::single_instance::GUI_EXIT_WAIT_MS,
+    ) {
+        crate::log_msg("[tray] GUI did not exit before tray shutdown");
+    }
 }
 
 pub fn spawn_tray_instance() -> Result<()> {
@@ -325,12 +433,6 @@ pub fn launch_spec_for_path(exe: &Path, args: &[&str]) -> InstanceLaunchSpec {
     InstanceLaunchSpec {
         exe: exe.to_path_buf(),
         args: args.iter().map(|arg| (*arg).to_string()).collect(),
-    }
-}
-
-fn exit_process() -> ! {
-    unsafe {
-        windows::Win32::System::Threading::ExitProcess(0);
     }
 }
 

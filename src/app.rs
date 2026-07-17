@@ -179,6 +179,18 @@ impl MemoryCleanerApp {
         self.window = Some(window.window_handle());
         if let Ok(hwnd) = win32::window::hwnd_from_window(window) {
             self.main_hwnd = Some(hwnd.0 as isize);
+            let session = win32::ipc::GuiSession {
+                pid: std::process::id(),
+                hwnd: hwnd.0 as isize,
+            };
+            std::thread::Builder::new()
+                .name("gui-ipc-init".into())
+                .spawn(move || {
+                    if let Err(error) = win32::ipc::init_gui_writer(session) {
+                        crate::log_msg(&format!("[ipc] GUI register failed: {error:#}"));
+                    }
+                })
+                .ok();
         }
 
         let weak = cx.weak_entity();
@@ -218,6 +230,9 @@ impl MemoryCleanerApp {
     }
 
     pub(crate) fn sync_tray(&self) {
+        if !crate::tray::is_installed() {
+            return;
+        }
         let virtual_mem = if self.settings.show_virtual_memory {
             self.virtual_mem.as_ref()
         } else {
@@ -241,6 +256,9 @@ impl MemoryCleanerApp {
             let _ = this.update(cx, |app, _| {
                 if app.settings_save_gen == generation {
                     app.settings.save();
+                    if !crate::tray::is_installed() {
+                        win32::ipc::notify_settings_changed();
+                    }
                 }
             });
         })
@@ -297,10 +315,18 @@ impl MemoryCleanerApp {
         match action {
             CloseAction::ReturnToTray => {
                 crate::log_msg("[close] hide_to_tray");
-                Self::spawn_tray_instance();
+                if !crate::tray::is_installed() {
+                    win32::ipc::unregister_gui();
+                }
+                if let Err(error) = win32::process::ensure_tray_host_running() {
+                    crate::log_msg(&format!("[close] tray host unavailable: {error:#}"));
+                }
             }
             CloseAction::ExitApp => {
                 crate::log_msg("[close] quit_app");
+                if !crate::tray::is_installed() {
+                    win32::ipc::unregister_gui();
+                }
             }
         }
         cx.defer(|cx| {
@@ -363,17 +389,13 @@ impl MemoryCleanerApp {
         self.stop_background_tasks();
         self.hide_main_window();
         crate::log_msg("[close] hide_to_tray source=tray_menu");
-        Self::spawn_tray_instance();
+        if let Err(error) = win32::process::ensure_tray_host_running() {
+            crate::log_msg(&format!("[close] tray host unavailable: {error:#}"));
+        }
         cx.defer(|cx| {
             crate::log_msg("[close] schedule_app_quit");
             cx.quit();
         });
-    }
-
-    fn spawn_tray_instance() {
-        if let Err(error) = win32::process::spawn_tray_instance() {
-            crate::log_msg(&format!("[close] tray spawn failed: {error:#}"));
-        }
     }
 
     pub fn apply_locale(&mut self, cx: &mut Context<Self>) {
@@ -607,6 +629,10 @@ impl MemoryCleanerApp {
         tray_rx: TrayReceiver,
         tray_listener_active: Arc<AtomicBool>,
     ) {
+        if !crate::tray::is_installed() {
+            return;
+        }
+
         cx.spawn(async move |this, cx| {
             loop {
                 if !tray_listener_active.load(Ordering::Acquire) {
@@ -689,7 +715,11 @@ impl MemoryCleanerApp {
         self.optimize_percent = 0.0;
         self.optimize_status.clear();
         self.optimize_has_errors = false;
-        crate::tray::start_spin();
+        if crate::tray::is_installed() {
+            crate::tray::start_spin();
+        } else {
+            win32::ipc::notify_spin_start();
+        }
         cx.notify();
 
         cx.spawn(async move |this, cx| {
@@ -739,7 +769,11 @@ impl MemoryCleanerApp {
                     app.optimize_step.clear();
                     app.is_optimizing = false;
                     app.optimize_percent = 0.0;
-                    crate::tray::stop_spin();
+                    if crate::tray::is_installed() {
+                        crate::tray::stop_spin();
+                    } else {
+                        win32::ipc::notify_spin_stop();
+                    }
                     app.optimize_has_errors = result.has_errors;
                     app.optimize_status = result.status_message.clone();
                     crate::log::write(&format!("[optimize] result: {}", app.optimize_status));

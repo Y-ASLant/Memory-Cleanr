@@ -87,6 +87,10 @@ pub fn install(tx: Sender<TrayCommand>) -> Result<(), Box<dyn std::error::Error>
     Tray::install(tx)
 }
 
+pub fn is_installed() -> bool {
+    TRAY_INSTALLED.load(Ordering::Acquire)
+}
+
 fn tray() -> Option<&'static Tray> {
     let ptr = TRAY.load(Ordering::Acquire);
     if ptr.is_null() {

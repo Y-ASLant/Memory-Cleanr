@@ -185,7 +185,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::optimize::MemoryAreas;
     use crate::settings::Settings;
 
     #[test]
@@ -204,14 +203,18 @@ mod tests {
     }
 
     #[test]
-    fn run_emits_progress_for_enabled_working_set_only() {
-        let settings = Settings {
-            memory_areas: MemoryAreas::WORKING_SET.bits(),
-            ..Settings::default()
-        };
+    fn run_step_emits_progress_without_running_system_cleanup() {
         let mut progress = Vec::new();
-        let _result = run(&settings, 1024, |update| progress.push(update));
-        assert!(!progress.is_empty());
-        assert!(progress.iter().any(|update| update.percent >= 0.0));
+        let ok = run_step(
+            "Mock Step",
+            Box::new(|| Ok(())),
+            0,
+            2,
+            &mut |update| progress.push(update),
+        );
+        assert!(ok);
+        assert_eq!(progress.len(), 2);
+        assert!((progress[0].percent - 0.0).abs() < f32::EPSILON);
+        assert!((progress[1].percent - 50.0).abs() < f32::EPSILON);
     }
 }

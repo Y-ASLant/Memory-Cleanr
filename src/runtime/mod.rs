@@ -6,12 +6,6 @@ use anyhow::Result;
 
 use crate::settings::Settings;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Phase {
-    Gui,
-    Quit,
-}
-
 pub mod gui_app;
 pub mod tray_host;
 
@@ -27,11 +21,11 @@ pub fn ensure_tray(
     Ok(())
 }
 
-pub fn run_tray(settings: &Settings, tray_rx: TrayReceiver) -> Result<Phase> {
+pub fn run_tray(settings: &Settings, tray_rx: TrayReceiver) -> Result<()> {
     crate::log_msg("[tray] session start");
-    let phase = tray_host::run(settings, tray_rx)?;
-    crate::log_msg(&format!("[tray] session finished -> {phase:?}"));
-    Ok(phase)
+    tray_host::run(settings, tray_rx)?;
+    crate::log_msg("[tray] session finished");
+    Ok(())
 }
 
 pub fn run_gui(settings: crate::settings::Settings, tray_rx: TrayReceiver) -> Result<()> {

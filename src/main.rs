@@ -2,7 +2,7 @@
 
 use memory_cleanr::{
     locale, log_msg,
-    runtime::{self, Phase},
+    runtime,
     settings::Settings,
     win32,
 };
@@ -80,10 +80,6 @@ fn ensure_elevated() {
 
 fn main() {
     ensure_elevated();
-    if let Err(e) = win32::single_instance::ensure_single_instance() {
-        log_msg(&e.to_string());
-        std::process::exit(0);
-    }
 
     let mut settings = Settings::load();
     if let Err(error) = win32::startup::sync(&settings) {
@@ -95,51 +91,56 @@ fn main() {
         log_msg(&format!("[notification] init failed: {e:#}"));
     }
 
+    if win32::startup::is_startup_launch() {
+        if let Err(error) = win32::single_instance::ensure_tray_singleton() {
+            log_msg(&error.to_string());
+            std::process::exit(0);
+        }
+        run_tray_session(&mut settings);
+        return;
+    }
+
+    if let Err(error) = win32::process::ensure_tray_host_running() {
+        log_msg(&format!("[gui] failed to start tray host: {error:#}"));
+    }
+
+    if let Err(error) = win32::single_instance::ensure_gui_singleton() {
+        log_msg(&error.to_string());
+        if let Err(activate_error) = win32::process::activate_or_spawn_gui() {
+            log_msg(&format!("[gui] activate existing failed: {activate_error:#}"));
+        } else {
+            log_msg("[gui] activated existing GUI window");
+        }
+        std::process::exit(0);
+    }
+
+    run_gui_session(&mut settings);
+}
+
+fn run_tray_session(settings: &mut Settings) {
+    *settings = Settings::load();
+    locale::apply(settings);
+
     let (command_tx, command_rx) = std::sync::mpsc::channel();
     let tray_rx = std::sync::Arc::new(std::sync::Mutex::new(command_rx));
 
-    if win32::startup::is_startup_launch() {
-        run_tray_session(&mut settings, &command_tx, &tray_rx);
-    } else {
-        run_gui_session(&mut settings, &command_tx, &tray_rx);
-    }
-}
-
-fn run_tray_session(
-    settings: &mut Settings,
-    command_tx: &std::sync::mpsc::Sender<memory_cleanr::tray::TrayCommand>,
-    tray_rx: &std::sync::Arc<
-        std::sync::Mutex<std::sync::mpsc::Receiver<memory_cleanr::tray::TrayCommand>>,
-    >,
-) {
-    *settings = Settings::load();
-    locale::apply(settings);
-
-    if let Err(error) = runtime::ensure_tray(command_tx, settings) {
+    if let Err(error) = runtime::ensure_tray(&command_tx, settings) {
         log_msg(&format!("Failed to install tray icon: {error:#}"));
     }
 
-    match runtime::run_tray(settings, std::sync::Arc::clone(tray_rx)) {
-        Ok(Phase::Gui) => win32::process::relaunch_gui_and_exit(),
-        Ok(Phase::Quit) | Err(_) => {}
+    if let Err(error) = runtime::run_tray(settings, std::sync::Arc::clone(&tray_rx)) {
+        log_msg(&format!("[tray] failed: {error:#}"));
     }
 }
 
-fn run_gui_session(
-    settings: &mut Settings,
-    command_tx: &std::sync::mpsc::Sender<memory_cleanr::tray::TrayCommand>,
-    tray_rx: &std::sync::Arc<
-        std::sync::Mutex<std::sync::mpsc::Receiver<memory_cleanr::tray::TrayCommand>>,
-    >,
-) {
+fn run_gui_session(settings: &mut Settings) {
     *settings = Settings::load();
     locale::apply(settings);
 
-    if let Err(error) = runtime::ensure_tray(command_tx, settings) {
-        log_msg(&format!("Failed to install tray icon: {error:#}"));
-    }
+    let (_command_tx, command_rx) = std::sync::mpsc::channel();
+    let tray_rx = std::sync::Arc::new(std::sync::Mutex::new(command_rx));
 
-    if let Err(error) = runtime::run_gui(settings.clone(), std::sync::Arc::clone(tray_rx)) {
+    if let Err(error) = runtime::run_gui(settings.clone(), std::sync::Arc::clone(&tray_rx)) {
         log_msg(&format!("[gui] failed: {error:#}"));
     }
 }
