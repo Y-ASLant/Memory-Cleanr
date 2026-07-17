@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, master]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  x86_64:
+    name: x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --release -- -D warnings
+
+      - name: Test
+        run: cargo test
+
+      - name: Build
+        run: cargo build --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MemoryCleanr-x86_64
+          path: target/release/MemoryCleanr.exe
+
+  aarch64:
+    name: aarch64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: aarch64
+
+      - name: Install ARM64 C++ build tools
+        run: |
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe" modify --installPath $vsPath --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 --quiet --wait --norestart
+        shell: pwsh
+
+      - name: Clippy
+        run: cargo clippy --target aarch64-pc-windows-msvc -- -D warnings
+
+      - name: Build
+        run: cargo build --target aarch64-pc-windows-msvc --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MemoryCleanr-aarch64
+          path: target/aarch64-pc-windows-msvc/release/MemoryCleanr.exe

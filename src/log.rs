@@ -105,6 +105,7 @@ pub fn write(msg: &str) {
     let line = format!("[{ts}] {msg}\n");
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
         let _ = file.write_all(line.as_bytes());
+        let _ = file.flush();
     }
 }
 

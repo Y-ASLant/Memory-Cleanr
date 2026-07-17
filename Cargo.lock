@@ -8,6 +8,7 @@ version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3b7f7f85a7e5f68090000ed7622545829afd484d210358702ae4cb97dd0c320"
 dependencies = [
+ "enumn",
  "uuid",
 ]
 
@@ -1510,6 +1511,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "enumn"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f9ed6b3789237c8a0c1c505af1c7eb2c560df6186f01b098c3a1064ea532f38"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "equator"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2265,7 +2277,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://github.com/zed-industries/zed#a0bb97cad5b900d3a29e60a6d180e56d4c891847"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2298,7 +2310,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://github.com/zed-industries/zed#a0bb97cad5b900d3a29e60a6d180e56d4c891847"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2356,7 +2368,7 @@ dependencies = [
 [[package]]
 name = "gpui_platform"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://github.com/zed-industries/zed#a0bb97cad5b900d3a29e60a6d180e56d4c891847"
 dependencies = [
  "console_error_panic_hook",
  "gpui",
@@ -2389,7 +2401,7 @@ dependencies = [
 [[package]]
 name = "gpui_web"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://github.com/zed-industries/zed#a0bb97cad5b900d3a29e60a6d180e56d4c891847"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
@@ -2413,7 +2425,7 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://github.com/zed-industries/zed#a0bb97cad5b900d3a29e60a6d180e56d4c891847"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2441,7 +2453,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#65e1c5af258d4c80036467d583691f3f9ded0897"
+source = "git+https://github.com/zed-industries/zed#a0bb97cad5b900d3a29e60a6d180e56d4c891847"
 dependencies = [
  "accesskit",
  "accesskit_windows",

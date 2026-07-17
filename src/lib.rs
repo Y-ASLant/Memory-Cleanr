@@ -8,6 +8,8 @@ pub mod memory;
 pub mod messages;
 pub mod optimize;
 pub mod privileges;
+pub mod runtime;
+pub mod service;
 pub mod settings;
 pub mod tray;
 pub mod ui;

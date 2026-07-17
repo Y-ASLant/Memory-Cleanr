@@ -221,7 +221,32 @@ fn title_bar_drag_area(
         )
 }
 
-fn window_controls(cx: &App) -> impl IntoElement {
+fn title_bar_close_control(
+    _app: &MemoryCleanerApp,
+    cx: &mut Context<MemoryCleanerApp>,
+) -> impl IntoElement {
+    let colors = TitleBarActionColors::from_theme(cx, true);
+
+    div()
+        .id("close")
+        .flex()
+        .w(TITLE_BAR_HEIGHT)
+        .h_full()
+        .flex_shrink_0()
+        .justify_center()
+        .content_center()
+        .items_center()
+        .text_color(colors.foreground)
+        .hover(|style| style.bg(colors.hover_bg).text_color(colors.hover_fg))
+        .active(|style| style.bg(colors.active_bg).text_color(colors.hover_fg))
+        .on_click(cx.listener(|app, _, _window, cx| {
+            cx.stop_propagation();
+            app.handle_window_close(cx);
+        }))
+        .child(Icon::new(IconName::WindowClose).small())
+}
+
+fn window_controls(app: &MemoryCleanerApp, cx: &mut Context<MemoryCleanerApp>) -> impl IntoElement {
     h_flex()
         .id("window-controls")
         .items_center()
@@ -234,13 +259,7 @@ fn window_controls(cx: &App) -> impl IntoElement {
             cx,
             false,
         ))
-        .child(title_bar_control(
-            "close",
-            IconName::WindowClose,
-            WindowControlArea::Close,
-            cx,
-            true,
-        ))
+        .child(title_bar_close_control(app, cx))
 }
 
 pub fn render_title_bar(
@@ -281,7 +300,7 @@ pub fn render_title_bar(
                 }
                 actions
                     .child(expand_toggle_control(app, action_colors, cx))
-                    .child(window_controls(cx))
+                    .child(window_controls(app, cx))
             }),
     )
 }

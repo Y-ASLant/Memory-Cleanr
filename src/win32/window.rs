@@ -3,9 +3,10 @@ use gpui::Window;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GWL_EXSTYLE, GWL_STYLE, GetWindowLongPtrW, HWND_NOTOPMOST, HWND_TOPMOST, IsIconic,
-    SHOW_WINDOW_CMD, SW_RESTORE, SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SetWindowLongPtrW, SetWindowPos, ShowWindow, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX,
+    DestroyWindow, GWL_EXSTYLE, GWL_STYLE, GetWindowLongPtrW, HWND_NOTOPMOST, HWND_TOPMOST,
+    IsIconic, IsWindow, SHOW_WINDOW_CMD, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX,
 };
 
 fn show_window(hwnd: HWND, cmd: SHOW_WINDOW_CMD) -> Result<()> {
@@ -41,6 +42,47 @@ pub(crate) fn hwnd_from_window(window: &Window) -> Result<HWND> {
     };
 
     Ok(HWND(win32.hwnd.get() as _))
+}
+
+/// Destroy the native window immediately on the UI thread.
+///
+/// GPUI normally destroys windows asynchronously after its message loop stops, which leaves
+/// a visible "Not Responding" shell when we hand off to the tray host in the same process.
+pub fn destroy_window(window: &Window) -> Result<()> {
+    destroy_hwnd(hwnd_from_window(window)?)
+}
+
+pub fn destroy_hwnd_raw(hwnd: isize) -> Result<()> {
+    destroy_hwnd(HWND(hwnd as _))
+}
+
+pub fn hide_hwnd_raw(hwnd: isize) -> Result<()> {
+    unsafe {
+        let hwnd = HWND(hwnd as _);
+        if IsWindow(Some(hwnd)).as_bool() {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+    }
+    Ok(())
+}
+
+pub fn destroy_hwnd(hwnd: HWND) -> Result<()> {
+    unsafe {
+        if IsWindow(Some(hwnd)).as_bool() {
+            DestroyWindow(hwnd).context("DestroyWindow failed")?;
+        }
+    }
+    Ok(())
+}
+
+/// Hide the window to the notification area without tearing down GPUI yet.
+pub fn hide_to_notification_area(window: &Window) -> Result<()> {
+    let hwnd = hwnd_from_window(window)?;
+    apply_extended_style(hwnd, |style| {
+        (style & !WS_EX_APPWINDOW.0) | WS_EX_TOOLWINDOW.0
+    })?;
+    show_window(hwnd, SW_HIDE)?;
+    Ok(())
 }
 
 /// Restore the window from tray-only hidden state.

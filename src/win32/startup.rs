@@ -23,7 +23,11 @@ pub fn is_startup_launch() -> bool {
 
 /// Args passed to the elevated child so startup mode survives UAC relaunch.
 pub fn elevation_relaunch_args() -> String {
-    if is_startup_launch() {
+    elevation_relaunch_args_for(is_startup_launch())
+}
+
+pub fn elevation_relaunch_args_for(is_startup_launch: bool) -> String {
+    if is_startup_launch {
         format!("{ELEVATED_ARG} {STARTUP_ARG}")
     } else {
         ELEVATED_ARG.to_string()
@@ -47,13 +51,24 @@ fn win32_ok(status: windows::Win32::Foundation::WIN32_ERROR) -> Result<()> {
 /// Command line written to the Run key (quoted when the path contains spaces).
 pub fn startup_command() -> Result<String> {
     let exe = std::env::current_exe().context("current_exe unavailable")?;
-    let path = exe.display().to_string();
-    let exe_part = if path.contains(' ') {
-        format!("\"{path}\"")
+    Ok(format_exe_launch_command(
+        &exe.display().to_string(),
+        &[STARTUP_ARG],
+    ))
+}
+
+/// Build `"C:\Path With Spaces\app.exe" --arg` style command lines.
+pub fn format_exe_launch_command(exe_path: &str, args: &[&str]) -> String {
+    let exe_part = if exe_path.contains(' ') {
+        format!("\"{exe_path}\"")
     } else {
-        path
+        exe_path.to_string()
     };
-    Ok(format!("{exe_part} {STARTUP_ARG}"))
+    if args.is_empty() {
+        exe_part
+    } else {
+        format!("{exe_part} {}", args.join(" "))
+    }
 }
 
 pub fn is_enabled() -> bool {
@@ -168,11 +183,31 @@ mod tests {
         let command = startup_command().expect("current_exe");
         assert!(command.ends_with(STARTUP_ARG));
         let exe = std::env::current_exe().expect("current_exe");
-        let path = exe.display().to_string();
-        if path.contains(' ') {
-            assert_eq!(command, format!("\"{path}\" {STARTUP_ARG}"));
-        } else {
-            assert_eq!(command, format!("{path} {STARTUP_ARG}"));
-        }
+        assert_eq!(
+            command,
+            format_exe_launch_command(&exe.display().to_string(), &[STARTUP_ARG])
+        );
+    }
+
+    #[test]
+    fn format_exe_launch_command_quotes_paths_with_spaces() {
+        assert_eq!(
+            format_exe_launch_command(r"C:\Program Files\App.exe", &["--startup"]),
+            r#""C:\Program Files\App.exe" --startup"#
+        );
+        assert_eq!(
+            format_exe_launch_command(r"C:\App.exe", &["--startup"]),
+            r"C:\App.exe --startup"
+        );
+        assert_eq!(format_exe_launch_command(r"C:\App.exe", &[]), r"C:\App.exe");
+    }
+
+    #[test]
+    fn elevation_relaunch_args_for_startup_mode() {
+        assert_eq!(
+            elevation_relaunch_args_for(true),
+            format!("{ELEVATED_ARG} {STARTUP_ARG}")
+        );
+        assert_eq!(elevation_relaunch_args_for(false), ELEVATED_ARG);
     }
 }

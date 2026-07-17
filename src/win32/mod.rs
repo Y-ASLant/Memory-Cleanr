@@ -1,4 +1,5 @@
 pub mod hotkey;
+pub mod message_loop;
 pub mod notification;
 pub mod nt;
 pub mod os;

@@ -10,7 +10,6 @@ use image::{RgbaImage, imageops};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
-use crate::app::MemoryCleanerApp;
 use crate::memory::MemorySection;
 
 /// Delay between 90° rotation steps while optimizing.
@@ -19,6 +18,7 @@ const SPIN_STEP_MS: u64 = 120;
 static TRAY: AtomicPtr<Tray> = AtomicPtr::new(std::ptr::null_mut());
 static ICON_FRAMES: OnceLock<[RgbaImage; 4]> = OnceLock::new();
 static CMD_TX: OnceLock<Sender<TrayCommand>> = OnceLock::new();
+static TRAY_INSTALLED: AtomicBool = AtomicBool::new(false);
 static SPIN_GENERATION: AtomicU32 = AtomicU32::new(0);
 static SPIN_ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -36,13 +36,18 @@ pub enum TrayCommand {
     /// Global hotkey (`RegisterHotKey`) triggered memory cleanup.
     Optimize,
     MenuAction(String),
-    /// Tray icon spin animation frame (0 = upright). Handled on the GPUI thread only.
+    /// Tray icon spin animation frame (0–3). Applied on the tray-host or GPUI thread.
     SetSpinFrame(u32),
 }
 
 impl Tray {
     pub fn install(tx: Sender<TrayCommand>) -> Result<(), Box<dyn std::error::Error>> {
-        let _ = CMD_TX.set(tx.clone());
+        let _ = CMD_TX.get_or_init(|| tx.clone());
+
+        if TRAY_INSTALLED.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+
         install_event_handlers(tx);
 
         let optimize = MenuItem::with_id("optimize", t!("tray.optimize"), true, None);
@@ -76,6 +81,10 @@ impl Tray {
 
         Ok(())
     }
+}
+
+pub fn install(tx: Sender<TrayCommand>) -> Result<(), Box<dyn std::error::Error>> {
+    Tray::install(tx)
 }
 
 fn tray() -> Option<&'static Tray> {
@@ -275,10 +284,16 @@ fn create_fallback_icon() -> Icon {
     icon_from_rgba(source.into_raw(), width, height)
 }
 
-pub fn dispatch_command(
-    app: &mut MemoryCleanerApp,
+pub fn apply_spin_frame(quarters: u32) {
+    if quarters == 0 || SPIN_ACTIVE.load(Ordering::Relaxed) {
+        set_tray_icon_rotation(quarters);
+    }
+}
+
+pub fn dispatch_gui_command(
+    app: &mut crate::app::MemoryCleanerApp,
     command: TrayCommand,
-    cx: &mut gpui::Context<MemoryCleanerApp>,
+    cx: &mut gpui::Context<crate::app::MemoryCleanerApp>,
 ) {
     match command {
         TrayCommand::ActivateWindow => app.activate_window(cx),
@@ -288,11 +303,7 @@ pub fn dispatch_command(
         }
         TrayCommand::Optimize => app.run_optimize(cx),
         TrayCommand::MenuAction(action) => app.handle_tray_action(&action, cx),
-        TrayCommand::SetSpinFrame(quarters) => {
-            if quarters == 0 || SPIN_ACTIVE.load(Ordering::Relaxed) {
-                set_tray_icon_rotation(quarters);
-            }
-        }
+        TrayCommand::SetSpinFrame(quarters) => apply_spin_frame(quarters),
     }
 }
 

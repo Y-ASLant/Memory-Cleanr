@@ -1,7 +1,7 @@
 use rust_i18n::t;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -11,11 +11,12 @@ use gpui_component::{Root, TitleBar, WindowExt};
 use smol::Timer;
 
 use crate::locale;
-use crate::memory::{MemorySection, MemoryStatus};
-use crate::messages::{build_cleanup_result_message, format_freed_message};
+use crate::memory::MemorySection;
 use crate::optimize::{self, MemoryAreas};
+use crate::runtime::TrayReceiver;
+use crate::service::{memory, optimize_runner};
 use crate::settings::Settings;
-use crate::tray::{TrayCommand, dispatch_command};
+use crate::tray::dispatch_gui_command;
 use crate::ui::layout::SECTION_GAP;
 use crate::win32;
 
@@ -63,79 +64,49 @@ pub fn window_options(expanded: bool, cx: &App) -> WindowOptions {
 pub struct AppEntityHolder(pub Entity<MemoryCleanerApp>);
 impl Global for AppEntityHolder {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseAction {
+    ReturnToTray,
+    #[allow(dead_code)]
+    ExitApp,
+}
+
+pub fn resolve_close_action(close_to_notification_area: bool) -> CloseAction {
+    if close_to_notification_area {
+        CloseAction::ReturnToTray
+    } else {
+        CloseAction::ExitApp
+    }
+}
+
 pub fn open_main_window(
     cx: &mut AsyncApp,
     settings: Settings,
-    tray_rx: std::sync::mpsc::Receiver<TrayCommand>,
-    launch_hidden: bool,
+    tray_rx: TrayReceiver,
 ) -> Result<()> {
     let options = cx.update(|app| window_options(false, app));
     cx.open_window(options, |window, cx| {
         window.set_window_title(crate::version::APP_NAME);
 
-        let app_entity =
-            cx.new(|cx| MemoryCleanerApp::new(window, cx, settings, tray_rx, launch_hidden));
+        let app_entity = cx.new(|cx| MemoryCleanerApp::new(window, cx, settings, tray_rx));
         let _ = win32::window::remove_maximize_button(window);
         crate::ui::theme::init_light_theme(window, cx);
 
         let root = cx.new(|cx| Root::new(app_entity.clone(), window, cx));
-
-        if launch_hidden {
-            app_entity.update(cx, |app, _| {
-                app.destroy_window_to_tray(window, "startup");
-                app.sync_tray();
-            });
-        } else {
-            window.activate_window();
-        }
-
+        window.activate_window();
         root
     })?;
     Ok(())
 }
 
-fn query_sections(show_virtual: bool) -> Result<(MemorySection, Option<MemorySection>)> {
-    let status = MemoryStatus::query()?;
-
-    let physical = MemorySection {
-        title: t!("memory.physical").to_string(),
-        total: status.total_phys,
-        used: status.used_phys(),
-        avail: status.avail_phys,
-        used_percent: status.memory_load as f32,
-    };
-
-    let virtual_mem = if show_virtual {
-        let virt_used = status
-            .total_page_file
-            .saturating_sub(status.avail_page_file);
-        let virt_percent = if status.total_page_file > 0 {
-            (virt_used as f64 / status.total_page_file as f64 * 100.0).round() as u32
-        } else {
-            0
-        };
-        Some(MemorySection {
-            title: t!("memory.virtual").to_string(),
-            total: status.total_page_file,
-            used: virt_used,
-            avail: status.avail_page_file,
-            used_percent: virt_percent as f32,
-        })
-    } else {
-        None
-    };
-
-    Ok((physical, virtual_mem))
-}
-
 pub struct MemoryCleanerApp {
     pub window: Option<AnyWindowHandle>,
+    main_hwnd: Option<isize>,
     pub settings: Settings,
     pub physical: MemorySection,
     pub virtual_mem: Option<MemorySection>,
     settings_save_gen: u32,
     memory_refresh_generation: Arc<AtomicU32>,
-    window_opening: bool,
     pub is_optimizing: bool,
     pub is_refreshing_icon_cache: bool,
     pub optimize_step: String,
@@ -144,9 +115,10 @@ pub struct MemoryCleanerApp {
     pub optimize_has_errors: bool,
     pub icon_cache_status: String,
     pub settings_expanded: bool,
-    window_shown: bool,
     pub cleanup_hotkey_recording: bool,
     pub(crate) hotkey_capture_focus: FocusHandle,
+    tray_listener_active: Arc<std::sync::atomic::AtomicBool>,
+    is_closing: Arc<AtomicBool>,
 }
 
 impl MemoryCleanerApp {
@@ -154,8 +126,7 @@ impl MemoryCleanerApp {
         window: &mut Window,
         cx: &mut Context<Self>,
         settings: Settings,
-        tray_rx: std::sync::mpsc::Receiver<TrayCommand>,
-        launch_hidden: bool,
+        tray_rx: TrayReceiver,
     ) -> Self {
         crate::log::set_debug_enabled(settings.debug_logging);
         if settings.debug_logging {
@@ -166,26 +137,22 @@ impl MemoryCleanerApp {
         }
 
         let show_virtual = settings.show_virtual_memory;
-        let (physical, virtual_mem) = query_sections(show_virtual).unwrap_or_else(|e| {
+        let (physical, virtual_mem) = memory::query_sections(show_virtual).unwrap_or_else(|e| {
             crate::log_msg(&format!("[memory] initial query failed: {e}"));
-            (
-                MemorySection::unavailable(&t!("memory.physical")),
-                if show_virtual {
-                    Some(MemorySection::unavailable(&t!("memory.virtual")))
-                } else {
-                    None
-                },
-            )
+            memory::unavailable_sections(show_virtual)
         });
+
+        let tray_listener_active = Arc::new(AtomicBool::new(true));
+        let is_closing = Arc::new(AtomicBool::new(false));
 
         let mut app = Self {
             window: None,
+            main_hwnd: None,
             settings,
             physical,
             virtual_mem,
             settings_save_gen: 0,
             memory_refresh_generation: Arc::new(AtomicU32::new(0)),
-            window_opening: false,
             is_optimizing: false,
             is_refreshing_icon_cache: false,
             optimize_step: String::new(),
@@ -194,57 +161,41 @@ impl MemoryCleanerApp {
             optimize_has_errors: false,
             icon_cache_status: String::new(),
             settings_expanded: false,
-            window_shown: !launch_hidden,
             cleanup_hotkey_recording: false,
             hotkey_capture_focus: cx.focus_handle(),
+            tray_listener_active: Arc::clone(&tray_listener_active),
+            is_closing: Arc::clone(&is_closing),
         };
 
         cx.set_global(AppEntityHolder(cx.entity()));
-        app.attach_window(window, cx, launch_hidden);
-        app.start_background_tasks(cx, tray_rx);
+        app.attach_window(window, cx);
+        app.start_background_tasks(cx, tray_rx, tray_listener_active);
         app.sync_tray();
 
         app
     }
 
-    fn attach_window(&mut self, window: &mut Window, cx: &mut Context<Self>, launch_hidden: bool) {
+    fn attach_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.window = Some(window.window_handle());
-        self.window_shown = !launch_hidden;
+        if let Ok(hwnd) = win32::window::hwnd_from_window(window) {
+            self.main_hwnd = Some(hwnd.0 as isize);
+        }
 
         let weak = cx.weak_entity();
-        window.on_window_should_close(cx, move |window, gpui_app| {
+        window.on_window_should_close(cx, move |_window, gpui_app| {
             crate::log_msg("[close] on_window_should_close");
-            let should_close = weak
-                .update(gpui_app, |this, _| {
-                    this.request_close("should_close", window)
-                })
-                .unwrap_or(true);
-
-            if should_close {
-                gpui_app.quit();
-            }
-            should_close
+            let _ = weak.update(gpui_app, |this, cx| this.request_close("should_close", cx));
+            false
         });
 
         if self.settings.always_on_top {
             let _ = win32::window::set_always_on_top(window, true);
         }
 
-        if !launch_hidden {
-            self.start_memory_refresh(cx);
-        }
-    }
-
-    fn pause_memory_refresh(&self) {
-        self.memory_refresh_generation
-            .fetch_add(1, Ordering::Relaxed);
+        self.start_memory_refresh(cx);
     }
 
     fn start_memory_refresh(&self, cx: &mut Context<Self>) {
-        if self.window.is_none() {
-            return;
-        }
-
         let generation = self.memory_refresh_generation.load(Ordering::Relaxed);
         let gen_arc = Arc::clone(&self.memory_refresh_generation);
         cx.spawn(async move |this, cx| {
@@ -254,9 +205,6 @@ impl MemoryCleanerApp {
                     break;
                 }
                 let Ok(()) = this.update(cx, |app, cx| {
-                    if app.window.is_none() || !app.window_shown {
-                        return;
-                    }
                     if app.refresh_memory() {
                         cx.notify();
                         app.sync_tray();
@@ -269,61 +217,19 @@ impl MemoryCleanerApp {
         .detach();
     }
 
-    fn open_window(&mut self, cx: &mut Context<Self>) {
-        if self.window.is_some() || self.window_opening {
-            return;
-        }
-
-        self.window_opening = true;
-        let expanded = self.settings_expanded;
-        cx.spawn(async move |this, cx| {
-            let entity = match this.upgrade() {
-                Some(entity) => entity,
-                None => return,
-            };
-
-            let options = cx.update(|app| window_options(expanded, app));
-            let opened = cx.open_window(options, |window, cx| {
-                entity.update(cx, |app, cx| {
-                    app.attach_window(window, cx, false);
-                    app.window_opening = false;
-                });
-                window.set_window_title(crate::version::APP_NAME);
-                let _ = win32::window::remove_maximize_button(window);
-                crate::ui::theme::init_light_theme(window, cx);
-                window.activate_window();
-                cx.new(|cx| Root::new(entity.clone(), window, cx))
-            });
-
-            if opened.is_err() {
-                entity.update(cx, |app, _| app.window_opening = false);
-            } else {
-                entity.update(cx, |app, _| app.sync_tray());
-            }
-        })
-        .detach();
-    }
-
-    fn window_visible(&self) -> bool {
-        self.window.is_some() && self.window_shown
-    }
-
     pub(crate) fn sync_tray(&self) {
         let virtual_mem = if self.settings.show_virtual_memory {
             self.virtual_mem.as_ref()
         } else {
             None
         };
-        crate::tray::sync_display(&self.physical, virtual_mem, self.window_visible());
+        crate::tray::sync_display(&self.physical, virtual_mem, true);
     }
 
     fn set_unavailable_sections(&mut self, show_virtual: bool) {
-        self.physical = MemorySection::unavailable(&t!("memory.physical"));
-        self.virtual_mem = if show_virtual {
-            Some(MemorySection::unavailable(&t!("memory.virtual")))
-        } else {
-            None
-        };
+        let (physical, virtual_mem) = memory::unavailable_sections(show_virtual);
+        self.physical = physical;
+        self.virtual_mem = virtual_mem;
     }
 
     pub(crate) fn queue_settings_save(&mut self, cx: &mut Context<Self>) {
@@ -343,7 +249,7 @@ impl MemoryCleanerApp {
 
     pub fn refresh_memory(&mut self) -> bool {
         let show_virtual = self.settings.show_virtual_memory;
-        let Ok((physical, virtual_mem)) = query_sections(show_virtual) else {
+        let Ok((physical, virtual_mem)) = memory::query_sections(show_virtual) else {
             if self.physical.is_unavailable()
                 && self.virtual_mem.as_ref().is_none_or(|v| v.is_unavailable())
             {
@@ -361,76 +267,119 @@ impl MemoryCleanerApp {
         changed
     }
 
+    pub fn close_action(&mut self, source: &str) -> CloseAction {
+        crate::log_msg(&format!(
+            "[close] close_action source={source} close_to_tray={}",
+            self.settings.close_to_notification_area
+        ));
+        self.settings.save();
+        crate::log_msg("[close] settings saved");
+        resolve_close_action(self.settings.close_to_notification_area)
+    }
+
+    pub fn handle_window_close(&mut self, cx: &mut Context<Self>) {
+        self.request_close("titlebar", cx);
+    }
+
+    fn request_close(&mut self, source: &str, cx: &mut Context<Self>) {
+        if self
+            .is_closing
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            crate::log_msg(&format!("[close] request_close ignored source={source}"));
+            return;
+        }
+
+        let action = self.close_action(source);
+        self.stop_background_tasks();
+        self.hide_main_window();
+        match action {
+            CloseAction::ReturnToTray => {
+                crate::log_msg("[close] hide_to_tray");
+                Self::spawn_tray_instance();
+            }
+            CloseAction::ExitApp => {
+                crate::log_msg("[close] quit_app");
+            }
+        }
+        cx.defer(|cx| {
+            crate::log_msg("[close] schedule_app_quit");
+            cx.quit();
+        });
+    }
+
+    fn hide_main_window(&self) {
+        let Some(hwnd) = self.main_hwnd else {
+            crate::log_msg("[close] hide_window skipped (no hwnd)");
+            return;
+        };
+        match win32::window::hide_hwnd_raw(hwnd) {
+            Ok(()) => crate::log_msg("[close] hide_window"),
+            Err(error) => {
+                crate::log_msg(&format!("[close] hide_window failed: {error:#}"));
+            }
+        }
+    }
+
+    fn stop_background_tasks(&self) {
+        self.tray_listener_active.store(false, Ordering::Release);
+        self.memory_refresh_generation
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn quit_app(&mut self, cx: &mut Context<Self>) {
+        if self
+            .is_closing
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        self.settings.save();
+        self.stop_background_tasks();
+        cx.defer(|cx| cx.quit());
+    }
+
     pub fn activate_window(&mut self, cx: &mut Context<Self>) {
         if let Some(handle) = self.window {
-            match handle.update(cx, |_, window, _| -> Result<()> {
+            let _ = handle.update(cx, |_, window, _| -> Result<()> {
                 crate::log_msg("[window] activate_window");
                 win32::window::show_from_tray(window)?;
                 window.activate_window();
                 Ok(())
-            }) {
-                Ok(Ok(())) => {
-                    self.window_shown = true;
-                    self.pause_memory_refresh();
-                    self.start_memory_refresh(cx);
-                    self.sync_tray();
-                    return;
-                }
-                Ok(Err(e)) => crate::log_msg(&format!("[window] show_from_tray failed: {e:#}")),
-                Err(_) => crate::log_msg("[window] activate_window handle update failed"),
-            }
-            self.window = None;
-        }
-        self.open_window(cx);
-    }
-
-    /// Remove the GPUI window and drop our handle. `activate_window` recreates it via
-    /// `open_window()`.
-    fn destroy_window_to_tray(&mut self, window: &mut Window, source: &str) {
-        window.remove_window();
-        self.window = None;
-        self.window_shown = false;
-        self.pause_memory_refresh();
-        crate::log_msg(&format!("[close] hide_to_tray destroy ok source={source}"));
-    }
-
-    /// Handle a close request. Returns `true` when the app should quit entirely.
-    pub fn request_close(&mut self, source: &str, window: &mut Window) -> bool {
-        crate::log_msg(&format!(
-            "[close] request_close source={source} close_to_tray={}",
-            self.settings.close_to_notification_area
-        ));
-        self.settings.save();
-        if self.settings.close_to_notification_area {
-            self.destroy_window_to_tray(window, source);
-            self.sync_tray();
-            false
-        } else {
-            true
+            });
         }
     }
 
     pub fn hide_to_tray(&mut self, cx: &mut Context<Self>) {
-        if let Some(handle) = self.window {
-            match handle.update(cx, |_, window, _| window.remove_window()) {
-                Ok(()) => {
-                    crate::log_msg("[close] hide_to_tray destroy ok source=tray_menu");
-                }
-                Err(_) => crate::log_msg("[close] hide_to_tray handle update failed"),
-            }
-        } else {
-            crate::log_msg("[close] hide_to_tray no window handle");
+        if self
+            .is_closing
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
         }
-        self.window = None;
-        self.window_shown = false;
-        self.pause_memory_refresh();
-        self.sync_tray();
+        self.stop_background_tasks();
+        self.hide_main_window();
+        crate::log_msg("[close] hide_to_tray source=tray_menu");
+        Self::spawn_tray_instance();
+        cx.defer(|cx| {
+            crate::log_msg("[close] schedule_app_quit");
+            cx.quit();
+        });
+    }
+
+    fn spawn_tray_instance() {
+        if let Err(error) = win32::process::spawn_tray_instance() {
+            crate::log_msg(&format!("[close] tray spawn failed: {error:#}"));
+        }
     }
 
     pub fn apply_locale(&mut self, cx: &mut Context<Self>) {
         locale::apply(&self.settings);
         let show_virtual = self.settings.show_virtual_memory;
-        if let Ok((physical, virtual_mem)) = query_sections(show_virtual) {
+        if let Ok((physical, virtual_mem)) = memory::query_sections(show_virtual) {
             self.physical = physical;
             self.virtual_mem = virtual_mem;
         } else {
@@ -646,17 +595,8 @@ impl MemoryCleanerApp {
     pub fn handle_tray_action(&mut self, action: &str, cx: &mut Context<Self>) {
         match action {
             "optimize" => self.run_optimize(cx),
-            "toggle_window" => {
-                if self.window_visible() {
-                    self.hide_to_tray(cx);
-                } else {
-                    self.activate_window(cx);
-                }
-            }
-            "quit" => {
-                self.settings.save();
-                cx.quit();
-            }
+            "toggle_window" => self.hide_to_tray(cx),
+            "quit" => self.quit_app(cx),
             _ => {}
         }
     }
@@ -664,143 +604,62 @@ impl MemoryCleanerApp {
     pub fn start_background_tasks(
         &self,
         cx: &mut Context<Self>,
-        mut tray_rx: std::sync::mpsc::Receiver<TrayCommand>,
+        tray_rx: TrayReceiver,
+        tray_listener_active: Arc<AtomicBool>,
     ) {
-        // 托盘命令监听
         cx.spawn(async move |this, cx| {
             loop {
+                if !tray_listener_active.load(Ordering::Acquire) {
+                    break;
+                }
+
+                let tray_rx_for_wait = Arc::clone(&tray_rx);
+                let active = Arc::clone(&tray_listener_active);
                 let (command, rx) = smol::unblock(move || {
-                    let result = tray_rx.recv();
-                    (result, tray_rx)
+                    if !active.load(Ordering::Acquire) {
+                        return (Err(std::sync::mpsc::RecvError), tray_rx_for_wait);
+                    }
+                    let result = tray_rx_for_wait
+                        .lock()
+                        .expect("tray receiver mutex poisoned")
+                        .recv_timeout(Duration::from_millis(100));
+                    match result {
+                        Ok(command) => (Ok(command), tray_rx_for_wait),
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            (Err(std::sync::mpsc::RecvError), tray_rx_for_wait)
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            (Err(std::sync::mpsc::RecvError), tray_rx_for_wait)
+                        }
+                    }
                 })
                 .await;
-                tray_rx = rx;
+                let _ = rx;
+
+                if !tray_listener_active.load(Ordering::Acquire) {
+                    break;
+                }
 
                 let Ok(command) = command else {
-                    break;
+                    continue;
                 };
 
                 if this
                     .update(cx, |this, cx| {
-                        dispatch_command(this, command, cx);
+                        dispatch_gui_command(this, command, cx);
                     })
                     .is_err()
                 {
                     break;
                 }
             }
+            crate::log_msg("[gui] tray command listener stopped");
         })
         .detach();
     }
 
     pub(crate) fn is_busy(&self) -> bool {
         self.is_refreshing_icon_cache || self.is_optimizing
-    }
-
-    async fn run_optimize_step(
-        this: WeakEntity<Self>,
-        cx: &mut AsyncApp,
-        name: String,
-        run: optimize::OptimizeStepFn,
-        step_index: usize,
-        total_steps: usize,
-    ) -> bool {
-        let step_base = step_index as f32 / total_steps as f32;
-        let step_span = 1.0 / total_steps as f32;
-
-        let _ = this.update(cx, |app, cx| {
-            app.optimize_step = t!("optimize.step", name = name.clone()).to_string();
-            app.optimize_percent = step_base * 100.0;
-            cx.notify();
-        });
-
-        Timer::after(Duration::from_millis(60)).await;
-
-        let result = smol::unblock(run).await;
-
-        if let Err(e) = &result {
-            crate::log::write(&format!("[optimize] {name} failed: {e:#}"));
-        }
-
-        let _ = this.update(cx, |app, cx| {
-            app.optimize_percent = (step_base + step_span) * 100.0;
-            cx.notify();
-        });
-
-        Timer::after(Duration::from_millis(100)).await;
-        result.is_ok()
-    }
-
-    async fn run_modified_file_cache_step(
-        this: WeakEntity<Self>,
-        cx: &mut AsyncApp,
-        step_index: usize,
-        total_steps: usize,
-    ) -> bool {
-        use std::sync::Arc;
-
-        use crate::win32::volume::{VolumeFlushSession, complete_volume_flush};
-
-        let step_base = step_index as f32 / total_steps as f32;
-        let step_span = 1.0 / total_steps as f32;
-        let name = MemoryAreas::MODIFIED_FILE_CACHE.label();
-
-        let session = match smol::unblock(VolumeFlushSession::open).await {
-            Ok(session) if session.is_empty() => {
-                let _ = this.update(cx, |app, cx| {
-                    app.optimize_step = t!("optimize.step", name = name.clone()).to_string();
-                    app.optimize_percent = (step_base + step_span) * 100.0;
-                    cx.notify();
-                });
-                return true;
-            }
-            Ok(session) => Arc::new(session),
-            Err(error) => {
-                crate::log::write(&format!(
-                    "[optimize] modified file cache volume enumeration failed: {error:#}"
-                ));
-                let _ = this.update(cx, |app, cx| {
-                    app.optimize_step = t!("optimize.step", name = name.clone()).to_string();
-                    app.optimize_percent = (step_base + step_span) * 100.0;
-                    cx.notify();
-                });
-                return false;
-            }
-        };
-
-        let volume_total = session.len();
-        let mut report = optimize::VolumeFlushReport::default();
-
-        for index in 0..volume_total {
-            let volume_label = session.label(index).to_string();
-            let sub_base = index as f32 / volume_total as f32;
-
-            let _ = this.update(cx, |app, cx| {
-                app.optimize_step = t!(
-                    "optimize.step_with_progress",
-                    name = name.clone(),
-                    volume = volume_label.clone(),
-                    current = (index + 1).to_string(),
-                    total = volume_total.to_string()
-                )
-                .to_string();
-                app.optimize_percent = (step_base + sub_base * step_span) * 100.0;
-                cx.notify();
-            });
-
-            let session_for_flush = Arc::clone(&session);
-            let flush_index = index;
-            let flush_result = smol::unblock(move || session_for_flush.flush(flush_index)).await;
-            report.record(&volume_label, flush_result);
-
-            let _ = this.update(cx, |app, cx| {
-                app.optimize_percent =
-                    (step_base + (index + 1) as f32 / volume_total as f32 * step_span) * 100.0;
-                cx.notify();
-            });
-        }
-
-        complete_volume_flush(report).is_ok()
     }
 
     pub fn run_optimize(&mut self, cx: &mut Context<Self>) {
@@ -810,17 +669,20 @@ impl MemoryCleanerApp {
 
         let areas = self.settings.memory_areas();
         let excluded = self.settings.excluded_processes.clone();
-        let steps = match optimize::step_plan(areas, &excluded) {
-            Ok(s) if !s.is_empty() => s,
-            _ => {
+        if let Ok(steps) = optimize::step_plan(areas, &excluded) {
+            if steps.is_empty() {
                 self.optimize_status = t!("tooltip.select_areas").to_string();
                 cx.notify();
                 return;
             }
-        };
+        } else {
+            self.optimize_status = t!("tooltip.select_areas").to_string();
+            cx.notify();
+            return;
+        }
 
         let avail_before = self.physical.avail;
-        let total = steps.len();
+        let settings = self.settings.clone();
         let notify = self.settings.show_optimization_notifications;
         self.is_optimizing = true;
         self.optimize_step = t!("button.cleanup_preparing").to_string();
@@ -839,44 +701,56 @@ impl MemoryCleanerApp {
                 .await;
             }
 
-            let mut completed: Vec<String> = Vec::new();
-            let mut errors: Vec<String> = Vec::new();
+            let (progress_tx, progress_rx) = std::sync::mpsc::channel();
+            let settings_for_thread = settings.clone();
+            let worker = std::thread::Builder::new()
+                .name("gui-optimize".into())
+                .spawn(move || {
+                    optimize_runner::run(&settings_for_thread, avail_before, |update| {
+                        let _ = progress_tx.send(update);
+                    })
+                })
+                .expect("spawn optimize worker");
 
-            for (index, (name, run)) in steps.into_iter().enumerate() {
-                let ok = if name == MemoryAreas::MODIFIED_FILE_CACHE.label() {
-                    Self::run_modified_file_cache_step(this.clone(), cx, index, total).await
-                } else {
-                    Self::run_optimize_step(this.clone(), cx, name.clone(), run, index, total).await
-                };
-
-                if ok {
-                    completed.push(name.clone());
-                    crate::log::write(&format!("[optimize] {name} succeeded"));
-                } else {
-                    errors.push(name);
+            loop {
+                match progress_rx.try_recv() {
+                    Ok(update) => {
+                        let _ = this.update(cx, |app, cx| {
+                            app.optimize_step = update.step_label;
+                            app.optimize_percent = update.percent;
+                            cx.notify();
+                        });
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        if worker.is_finished() {
+                            break;
+                        }
+                        Timer::after(Duration::from_millis(16)).await;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
                 }
             }
+
+            let result = worker.join().expect("optimize worker panicked");
 
             let notification = this
                 .update(cx, |app, cx| {
                     let _ = app.refresh_memory();
-                    let avail_after = app.physical.avail;
-                    let freed_detail = format_freed_message(avail_before, avail_after);
                     app.optimize_step.clear();
                     app.is_optimizing = false;
                     app.optimize_percent = 0.0;
                     crate::tray::stop_spin();
-                    let completed_refs: Vec<&str> = completed.iter().map(|s| s.as_str()).collect();
-                    let errors_refs: Vec<&str> = errors.iter().map(|s| s.as_str()).collect();
-                    app.optimize_has_errors = !errors.is_empty();
-                    app.optimize_status =
-                        build_cleanup_result_message(&completed_refs, &errors_refs, &freed_detail);
+                    app.optimize_has_errors = result.has_errors;
+                    app.optimize_status = result.status_message.clone();
                     crate::log::write(&format!("[optimize] result: {}", app.optimize_status));
                     cx.notify();
-                    if app.settings.show_optimization_notifications {
+                    if app.settings.show_optimization_notifications
+                        && !result.status_message.is_empty()
+                        && result.status_message != t!("tooltip.select_areas")
+                    {
                         Some((
                             t!("notification.optimize_title").to_string(),
-                            app.optimize_status.clone(),
+                            result.status_message.clone(),
                         ))
                     } else {
                         None

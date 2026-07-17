@@ -1,0 +1,316 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::RecvTimeoutError;
+use std::thread;
+use std::time::Duration;
+
+use anyhow::Result;
+use rust_i18n::t;
+
+use crate::locale;
+use crate::memory::MemorySection;
+use crate::runtime::{Phase, TrayReceiver};
+use crate::service::{memory, optimize_runner};
+use crate::settings::Settings;
+use crate::tray::{self, TrayCommand};
+use crate::win32::message_loop::MessageLoop;
+
+const FORWARDER_POLL_MS: u64 = 100;
+
+struct TrayHostState {
+    settings: Settings,
+    physical: MemorySection,
+    virtual_mem: Option<MemorySection>,
+    is_optimizing: Arc<AtomicBool>,
+    command_pending: Arc<std::sync::Mutex<Vec<TrayCommand>>>,
+    notify_hwnd: isize,
+}
+
+impl TrayHostState {
+    fn new(
+        settings: Settings,
+        command_pending: Arc<std::sync::Mutex<Vec<TrayCommand>>>,
+        notify_hwnd: isize,
+    ) -> Self {
+        locale::apply(&settings);
+        crate::log::set_debug_enabled(settings.debug_logging);
+        if settings.debug_logging {
+            crate::log_msg(&format!(
+                "[log] debug enabled path={}",
+                crate::log::log_file_path().display()
+            ));
+        }
+
+        let show_virtual = settings.show_virtual_memory;
+        let (physical, virtual_mem) = memory::query_sections(show_virtual).unwrap_or_else(|e| {
+            crate::log_msg(&format!("[memory] initial query failed: {e}"));
+            memory::unavailable_sections(show_virtual)
+        });
+
+        Self {
+            settings,
+            physical,
+            virtual_mem,
+            is_optimizing: Arc::new(AtomicBool::new(false)),
+            command_pending,
+            notify_hwnd,
+        }
+    }
+
+    fn sync_tray(&self) {
+        let virtual_mem = if self.settings.show_virtual_memory {
+            self.virtual_mem.as_ref()
+        } else {
+            None
+        };
+        tray::sync_display(&self.physical, virtual_mem, false);
+    }
+
+    fn refresh_memory(&mut self) -> bool {
+        let show_virtual = self.settings.show_virtual_memory;
+        let Ok((physical, virtual_mem)) = memory::query_sections(show_virtual) else {
+            if self.physical.is_unavailable()
+                && self.virtual_mem.as_ref().is_none_or(|v| v.is_unavailable())
+            {
+                return false;
+            }
+            let (physical, virtual_mem) = memory::unavailable_sections(show_virtual);
+            self.physical = physical;
+            self.virtual_mem = virtual_mem;
+            return true;
+        };
+
+        let changed = self.physical != physical || self.virtual_mem != virtual_mem;
+        if changed {
+            self.physical = physical;
+            self.virtual_mem = virtual_mem;
+        }
+        changed
+    }
+
+    fn spawn_optimize(&mut self) {
+        if self
+            .is_optimizing
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .is_err()
+        {
+            return;
+        }
+
+        let settings = self.settings.clone();
+        let avail_before = self.physical.avail;
+        let is_optimizing = Arc::clone(&self.is_optimizing);
+        let pending = Arc::clone(&self.command_pending);
+        let notify_hwnd = self.notify_hwnd;
+
+        thread::Builder::new()
+            .name("tray-optimize".into())
+            .spawn(move || {
+                tray::start_spin();
+
+                if settings.show_optimization_notifications
+                    && let Err(e) = crate::win32::notification::show(
+                        &t!("notification.optimize_start_title"),
+                        &t!("notification.optimize_start_body"),
+                    )
+                {
+                    crate::log_msg(&format!("[notification] failed: {e:#}"));
+                }
+
+                let result = optimize_runner::run(&settings, avail_before, |_update| {});
+
+                tray::stop_spin();
+                is_optimizing.store(false, Ordering::Release);
+
+                if settings.show_optimization_notifications
+                    && !result.status_message.is_empty()
+                    && result.status_message != t!("tooltip.select_areas")
+                    && let Err(e) = crate::win32::notification::show(
+                        &t!("notification.optimize_title"),
+                        &result.status_message,
+                    )
+                {
+                    crate::log_msg(&format!("[notification] failed: {e:#}"));
+                }
+
+                if let Ok(mut queue) = pending.lock() {
+                    queue.push(TrayCommand::RefreshTooltip);
+                }
+                unsafe {
+                    let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                        Some(windows::Win32::Foundation::HWND(notify_hwnd as *mut _)),
+                        crate::win32::message_loop::WM_APP_TRAY_CMD,
+                        windows::Win32::Foundation::WPARAM(0),
+                        windows::Win32::Foundation::LPARAM(0),
+                    );
+                }
+            })
+            .ok();
+    }
+}
+
+pub fn run(settings: &Settings, tray_rx: TrayReceiver) -> Result<Phase> {
+    MessageLoop::flush_thread_queue();
+
+    let message_loop = MessageLoop::new()?;
+    message_loop.start_timer();
+
+    let pending = Arc::new(std::sync::Mutex::new(Vec::<TrayCommand>::new()));
+    let mut state = TrayHostState::new(
+        settings.clone(),
+        Arc::clone(&pending),
+        message_loop.hwnd().0 as isize,
+    );
+    state.sync_tray();
+
+    let pending_for_thread = Arc::clone(&pending);
+    let hwnd = message_loop.hwnd();
+    let hwnd_token = hwnd.0 as isize;
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_for_thread = Arc::clone(&shutdown);
+
+    let forwarder = thread::Builder::new()
+        .name("tray-cmd-forward".into())
+        .spawn(move || {
+            while !shutdown_for_thread.load(Ordering::Acquire) {
+                let command = tray_rx
+                    .lock()
+                    .expect("tray receiver mutex poisoned")
+                    .recv_timeout(Duration::from_millis(FORWARDER_POLL_MS));
+
+                match command {
+                    Ok(command) => {
+                        if let Ok(mut queue) = pending_for_thread.lock() {
+                            queue.push(command);
+                        }
+                        unsafe {
+                            let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                                Some(windows::Win32::Foundation::HWND(hwnd_token as *mut _)),
+                                crate::win32::message_loop::WM_APP_TRAY_CMD,
+                                windows::Win32::Foundation::WPARAM(0),
+                                windows::Win32::Foundation::LPARAM(0),
+                            );
+                        }
+                    }
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
+            }
+        })?;
+
+    let mut exit_phase = Phase::Quit;
+
+    message_loop.run(|msg| match msg {
+        WM_TIMER => {
+            if state.refresh_memory() {
+                state.sync_tray();
+            }
+        }
+        WM_APP_TRAY_CMD => {
+            let commands: Vec<TrayCommand> = pending
+                .lock()
+                .map(|mut queue| queue.drain(..).collect())
+                .unwrap_or_default();
+
+            for command in commands {
+                if let Some(phase) = dispatch_command(&mut state, command) {
+                    exit_phase = phase;
+                    message_loop.request_quit();
+                    return;
+                }
+            }
+        }
+        _ => {}
+    });
+
+    drop(message_loop);
+    shutdown.store(true, Ordering::Release);
+    let _ = forwarder.join();
+
+    crate::log_msg(&format!("[tray] message loop exited -> {exit_phase:?}"));
+    Ok(exit_phase)
+}
+
+const WM_TIMER: u32 = windows::Win32::UI::WindowsAndMessaging::WM_TIMER;
+const WM_APP_TRAY_CMD: u32 = crate::win32::message_loop::WM_APP_TRAY_CMD;
+
+fn dispatch_command(state: &mut TrayHostState, command: TrayCommand) -> Option<Phase> {
+    match command {
+        TrayCommand::ActivateWindow => Some(Phase::Gui),
+        TrayCommand::RefreshTooltip => {
+            state.refresh_memory();
+            state.sync_tray();
+            None
+        }
+        TrayCommand::Optimize => {
+            state.spawn_optimize();
+            None
+        }
+        TrayCommand::MenuAction(action) => match action.as_str() {
+            "optimize" => {
+                state.spawn_optimize();
+                None
+            }
+            "toggle_window" => Some(Phase::Gui),
+            "quit" => {
+                state.settings.save();
+                Some(Phase::Quit)
+            }
+            _ => None,
+        },
+        TrayCommand::SetSpinFrame(quarters) => {
+            tray::apply_spin_frame(quarters);
+            None
+        }
+    }
+}
+
+// Optimize completion posts RefreshTooltip via the shared command queue.
+
+impl Drop for TrayHostState {
+    fn drop(&mut self) {
+        // Wait briefly for an in-flight tray optimize to finish spinning.
+        while self.is_optimizing.load(Ordering::Acquire) {
+            thread::sleep(Duration::from_millis(50));
+        }
+        let _ = self.refresh_memory();
+        self.sync_tray();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    fn test_host() -> TrayHostState {
+        TrayHostState::new(Settings::default(), Arc::new(Mutex::new(Vec::new())), 0)
+    }
+
+    #[test]
+    fn dispatch_command_opens_gui_for_window_activation() {
+        let mut host = test_host();
+        assert_eq!(
+            dispatch_command(&mut host, TrayCommand::ActivateWindow),
+            Some(Phase::Gui)
+        );
+        assert_eq!(
+            dispatch_command(&mut host, TrayCommand::MenuAction("toggle_window".into())),
+            Some(Phase::Gui)
+        );
+    }
+
+    #[test]
+    fn dispatch_command_quits_or_stays_for_other_actions() {
+        let mut host = test_host();
+        assert_eq!(
+            dispatch_command(&mut host, TrayCommand::MenuAction("quit".into())),
+            Some(Phase::Quit)
+        );
+        assert_eq!(dispatch_command(&mut host, TrayCommand::Optimize), None);
+        assert_eq!(
+            dispatch_command(&mut host, TrayCommand::MenuAction("optimize".into())),
+            None
+        );
+    }
+}

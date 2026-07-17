@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::mem::MaybeUninit;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -273,6 +274,66 @@ pub fn wait_for_elevated_relaunch(current_pid: u32, exe_name: &str, timeout_ms: 
     false
 }
 
+/// Spawn a fresh GUI instance and terminate this tray process.
+pub fn relaunch_gui_and_exit() -> ! {
+    crate::log_msg("[tray] relaunching GUI instance");
+    if let Err(error) = spawn_gui_instance() {
+        crate::log_msg(&format!("[tray] GUI relaunch failed: {error:#}"));
+    }
+    exit_process();
+}
+
+pub fn spawn_tray_instance() -> Result<()> {
+    let spec = tray_instance_launch_spec()?;
+    std::process::Command::new(&spec.exe)
+        .args(&spec.args)
+        .spawn()
+        .context("failed to spawn tray instance")?;
+    Ok(())
+}
+
+pub fn spawn_gui_instance() -> Result<()> {
+    let spec = gui_instance_launch_spec()?;
+    std::process::Command::new(&spec.exe)
+        .args(&spec.args)
+        .spawn()
+        .context("failed to spawn GUI instance")?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceLaunchSpec {
+    pub exe: PathBuf,
+    pub args: Vec<String>,
+}
+
+pub fn tray_instance_launch_spec() -> Result<InstanceLaunchSpec> {
+    Ok(InstanceLaunchSpec {
+        exe: std::env::current_exe().context("current_exe unavailable")?,
+        args: vec![crate::win32::startup::STARTUP_ARG.to_string()],
+    })
+}
+
+pub fn gui_instance_launch_spec() -> Result<InstanceLaunchSpec> {
+    Ok(InstanceLaunchSpec {
+        exe: std::env::current_exe().context("current_exe unavailable")?,
+        args: Vec::new(),
+    })
+}
+
+pub fn launch_spec_for_path(exe: &Path, args: &[&str]) -> InstanceLaunchSpec {
+    InstanceLaunchSpec {
+        exe: exe.to_path_buf(),
+        args: args.iter().map(|arg| (*arg).to_string()).collect(),
+    }
+}
+
+fn exit_process() -> ! {
+    unsafe {
+        windows::Win32::System::Threading::ExitProcess(0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,6 +377,36 @@ mod tests {
         assert_eq!(
             readable.memory_display(),
             Some(MemoryStatus::format_bytes(readable.working_set_bytes))
+        );
+    }
+
+    #[test]
+    fn tray_instance_launch_spec_includes_startup_flag() {
+        let spec = tray_instance_launch_spec().expect("current_exe");
+        assert_eq!(
+            spec.args,
+            vec![crate::win32::startup::STARTUP_ARG.to_string()]
+        );
+    }
+
+    #[test]
+    fn gui_instance_launch_spec_has_no_extra_args() {
+        let spec = gui_instance_launch_spec().expect("current_exe");
+        assert!(spec.args.is_empty());
+    }
+
+    #[test]
+    fn launch_spec_for_path_builds_expected_command() {
+        let spec = launch_spec_for_path(
+            Path::new(r"C:\Tools\MemoryCleanr.exe"),
+            &[crate::win32::startup::STARTUP_ARG],
+        );
+        assert_eq!(
+            spec,
+            InstanceLaunchSpec {
+                exe: PathBuf::from(r"C:\Tools\MemoryCleanr.exe"),
+                args: vec![crate::win32::startup::STARTUP_ARG.to_string()],
+            }
         );
     }
 }

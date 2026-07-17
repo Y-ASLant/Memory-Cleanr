@@ -1,24 +1,14 @@
 #![windows_subsystem = "windows"]
 
-use gpui::{actions, *};
-
 use memory_cleanr::{
-    app::{self, AppEntityHolder},
     locale, log_msg,
+    runtime::{self, Phase},
     settings::Settings,
-    tray::Tray,
     win32,
 };
 
-actions!(wmc_gpui, [Quit]);
-
-/// Passed to the elevated instance so it does not re-trigger UAC.
 const ELEVATED_ARG: &str = "--elevated";
 
-/// If the current process is not running as administrator, re-launch
-/// itself with `ShellExecuteW("runas")` and exit. This avoids embedding
-/// a `requireAdministrator` manifest (which conflicts with GPUI's own
-/// manifest via Cargo feature unification).
 fn ensure_elevated() {
     use std::os::windows::ffi::OsStrExt;
 
@@ -76,8 +66,6 @@ fn ensure_elevated() {
             std::ptr::null(),
             1,
         );
-        // ShellExecute may return > 32 even when the user later cancels UAC.
-        // Wait for the elevated child before exiting; otherwise continue unelevated.
         if h as usize > 32
             && win32::process::wait_for_elevated_relaunch(
                 std::process::id(),
@@ -87,7 +75,6 @@ fn ensure_elevated() {
         {
             std::process::exit(0);
         }
-        // User cancelled UAC — continue without admin; some cleanup areas will fail.
     }
 }
 
@@ -98,11 +85,10 @@ fn main() {
         std::process::exit(0);
     }
 
-    let settings = Settings::load();
+    let mut settings = Settings::load();
     if let Err(error) = win32::startup::sync(&settings) {
         log_msg(&format!("[startup] sync failed: {error:#}"));
     }
-    let launch_hidden = win32::startup::is_startup_launch();
     locale::apply(&settings);
 
     if let Err(e) = win32::notification::init() {
@@ -110,35 +96,50 @@ fn main() {
     }
 
     let (command_tx, command_rx) = std::sync::mpsc::channel();
-    win32::hotkey::bind_command_sender(command_tx.clone());
+    let tray_rx = std::sync::Arc::new(std::sync::Mutex::new(command_rx));
 
-    Tray::install(command_tx.clone()).unwrap_or_else(|e| {
-        log_msg(&format!("Failed to install tray icon: {e}"));
-    });
-    win32::hotkey::sync(&settings);
+    if win32::startup::is_startup_launch() {
+        run_tray_session(&mut settings, &command_tx, &tray_rx);
+    } else {
+        run_gui_session(&mut settings, &command_tx, &tray_rx);
+    }
+}
 
-    let app = gpui_platform::application()
-        .with_assets(gpui_component_assets::Assets)
-        .with_quit_mode(QuitMode::Explicit);
+fn run_tray_session(
+    settings: &mut Settings,
+    command_tx: &std::sync::mpsc::Sender<memory_cleanr::tray::TrayCommand>,
+    tray_rx: &std::sync::Arc<
+        std::sync::Mutex<std::sync::mpsc::Receiver<memory_cleanr::tray::TrayCommand>>,
+    >,
+) {
+    *settings = Settings::load();
+    locale::apply(settings);
 
-    app.run(move |cx| {
-        gpui_component::init(cx);
+    if let Err(error) = runtime::ensure_tray(command_tx, settings) {
+        log_msg(&format!("Failed to install tray icon: {error:#}"));
+    }
 
-        cx.bind_keys([KeyBinding::new("alt-f4", Quit, None)]);
-        cx.on_action(|_: &Quit, cx: &mut App| {
-            let entity = cx
-                .try_global::<AppEntityHolder>()
-                .map(|holder| holder.0.clone());
-            if let Some(entity) = entity {
-                entity.update(cx, |app, _| app.settings.save());
-            }
-            cx.quit();
-        });
+    match runtime::run_tray(settings, std::sync::Arc::clone(tray_rx)) {
+        Ok(Phase::Gui) => win32::process::relaunch_gui_and_exit(),
+        Ok(Phase::Quit) | Err(_) => {}
+    }
+}
 
-        cx.spawn(async move |cx| {
-            app::open_main_window(cx, settings, command_rx, launch_hidden)
-                .expect("Failed to open window");
-        })
-        .detach();
-    });
+fn run_gui_session(
+    settings: &mut Settings,
+    command_tx: &std::sync::mpsc::Sender<memory_cleanr::tray::TrayCommand>,
+    tray_rx: &std::sync::Arc<
+        std::sync::Mutex<std::sync::mpsc::Receiver<memory_cleanr::tray::TrayCommand>>,
+    >,
+) {
+    *settings = Settings::load();
+    locale::apply(settings);
+
+    if let Err(error) = runtime::ensure_tray(command_tx, settings) {
+        log_msg(&format!("Failed to install tray icon: {error:#}"));
+    }
+
+    if let Err(error) = runtime::run_gui(settings.clone(), std::sync::Arc::clone(tray_rx)) {
+        log_msg(&format!("[gui] failed: {error:#}"));
+    }
 }
