@@ -31,6 +31,16 @@ use crate::win32::process::{ProcessPickerEntry, list_processes_for_exclusion_pic
 const ROW_GAP: f32 = 6.;
 const BUTTON_STATUS_TRUNCATE_CHARS: usize = 24;
 
+fn defer_app_update(
+    weak: WeakEntity<MemoryCleanerApp>,
+    cx: &mut App,
+    f: impl FnOnce(&mut MemoryCleanerApp, &mut Context<MemoryCleanerApp>) + Send + 'static,
+) {
+    cx.defer(move |cx| {
+        let _ = weak.update(cx, f);
+    });
+}
+
 fn process_picker_detail(entry: &ProcessPickerEntry) -> String {
     let memory = entry
         .memory_display()
@@ -654,8 +664,9 @@ fn render_cleanup_hotkey_row(
                         .on_click({
                             let weak = weak_switch;
                             move |checked, _, cx| {
-                                let _ = weak.update(cx, |app, cx| {
-                                    app.set_cleanup_hotkey_enabled(*checked, cx);
+                                let enabled = *checked;
+                                defer_app_update(weak.clone(), cx, move |app, cx| {
+                                    app.set_cleanup_hotkey_enabled(enabled, cx);
                                 });
                             }
                         }),
@@ -695,9 +706,10 @@ pub fn render_window_behavior_dialog(
             foreground,
             {
                 let weak = weak.clone();
-                move |checked, window, cx| {
-                    let _ = weak.update(cx, |app, cx| {
-                        app.set_always_on_top(*checked, window, cx);
+                move |checked, _, cx| {
+                    let enabled = *checked;
+                    defer_app_update(weak.clone(), cx, move |app, cx| {
+                        app.set_always_on_top(enabled, cx);
                     });
                 }
             },
@@ -714,9 +726,10 @@ pub fn render_window_behavior_dialog(
             foreground,
             {
                 let weak = weak.clone();
-                move |checked, _window, cx| {
-                    let _ = weak.update(cx, |app, cx| {
-                        app.set_close_to_tray(*checked, cx);
+                move |checked, _, cx| {
+                    let enabled = *checked;
+                    defer_app_update(weak.clone(), cx, move |app, cx| {
+                        app.set_close_to_tray(enabled, cx);
                     });
                 }
             },
@@ -733,9 +746,10 @@ pub fn render_window_behavior_dialog(
             foreground,
             {
                 let weak = weak.clone();
-                move |checked, _window, cx| {
-                    let _ = weak.update(cx, |app, cx| {
-                        app.set_run_at_startup(*checked, cx);
+                move |checked, _, cx| {
+                    let enabled = *checked;
+                    defer_app_update(weak.clone(), cx, move |app, cx| {
+                        app.set_run_at_startup(enabled, cx);
                     });
                 }
             },
@@ -752,9 +766,10 @@ pub fn render_window_behavior_dialog(
             foreground,
             {
                 let weak = weak.clone();
-                move |checked, _window, cx| {
-                    let _ = weak.update(cx, |app, cx| {
-                        app.set_show_optimization_notifications(*checked, cx);
+                move |checked, _, cx| {
+                    let enabled = *checked;
+                    defer_app_update(weak.clone(), cx, move |app, cx| {
+                        app.set_show_optimization_notifications(enabled, cx);
                     });
                 }
             },
@@ -771,9 +786,10 @@ pub fn render_window_behavior_dialog(
             foreground,
             {
                 let weak = weak.clone();
-                move |checked, _window, cx| {
-                    let _ = weak.update(cx, |app, cx| {
-                        app.set_debug_logging(*checked, cx);
+                move |checked, _, cx| {
+                    let enabled = *checked;
+                    defer_app_update(weak.clone(), cx, move |app, cx| {
+                        app.set_debug_logging(enabled, cx);
                     });
                 }
             },

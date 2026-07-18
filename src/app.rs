@@ -203,15 +203,22 @@ impl MemoryCleanerApp {
 
         cx.spawn(async move |this, cx| {
             Timer::after(SETTINGS_SAVE_DEBOUNCE).await;
-            let _ = this.update(cx, |app, _| {
-                if app.settings_save_gen == generation {
-                    app.settings.save();
-                    win32::ipc::send_to_tray_logged(
-                        IpcMessage::SettingsChanged,
-                        "settings notify",
-                    );
-                }
-            });
+            let saved = this
+                .update(cx, |app, _| {
+                    if app.settings_save_gen == generation {
+                        app.settings.save();
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .ok();
+            if saved == Some(true) {
+                win32::ipc::send_to_tray_logged(
+                    IpcMessage::SettingsChanged,
+                    "settings notify",
+                );
+            }
         })
         .detach();
     }
@@ -409,14 +416,13 @@ impl MemoryCleanerApp {
         cx.notify();
     }
 
-    pub fn set_always_on_top(
-        &mut self,
-        enabled: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_always_on_top(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.settings.always_on_top = enabled;
-        let _ = win32::window::set_always_on_top(window, enabled);
+        if let Some(handle) = self.window {
+            let _ = handle.update(cx, |_, window, _| {
+                let _ = win32::window::set_always_on_top(window, enabled);
+            });
+        }
         self.queue_settings_save(cx);
         cx.notify();
     }

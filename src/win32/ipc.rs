@@ -269,20 +269,31 @@ impl GuiIpcWriter {
     }
 }
 
-fn connect_gui_writer(state: &mut GuiIpcState, timeout_ms: u32) -> Result<()> {
-    if let Some(writer) = state.writer.as_ref() {
-        writer.close();
-    }
-    state.writer = None;
+fn establish_gui_writer(timeout_ms: u32) -> Result<()> {
+    let session = {
+        let mut state = gui_ipc()
+            .lock()
+            .map_err(|_| anyhow::anyhow!("GUI IPC state mutex poisoned"))?;
+        if let Some(writer) = state.writer.as_ref() {
+            writer.close();
+        }
+        state.writer = None;
+        state.session
+    };
 
     let writer = GuiIpcWriter::connect(timeout_ms)?;
-    if let Some(session) = state.session {
+
+    if let Some(session) = session {
         writer.send(&IpcMessage::RegisterGui {
             pid: session.pid,
             hwnd: session.hwnd,
         })?;
         set_gui_session(Some(session));
     }
+
+    let mut state = gui_ipc()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("GUI IPC state mutex poisoned"))?;
     state.writer = Some(writer);
     Ok(())
 }
@@ -298,39 +309,61 @@ fn clear_gui_writer(state: &mut GuiIpcState) {
 
 /// Register the GUI window with the tray host and establish the IPC pipe.
 pub fn register_gui_session(session: GuiSession) -> Result<()> {
-    let mut state = gui_ipc()
-        .lock()
-        .map_err(|_| anyhow::anyhow!("GUI IPC state mutex poisoned"))?;
-    state.session = Some(session);
-    connect_gui_writer(&mut state, TRAY_READY_WAIT_MS)
+    {
+        let mut state = gui_ipc()
+            .lock()
+            .map_err(|_| anyhow::anyhow!("GUI IPC state mutex poisoned"))?;
+        state.session = Some(session);
+    }
+    establish_gui_writer(TRAY_READY_WAIT_MS)
 }
 
 pub fn send_to_tray(message: IpcMessage) -> Result<()> {
     let is_unregister = matches!(message, IpcMessage::UnregisterGui);
-    let mut state = gui_ipc()
-        .lock()
-        .map_err(|_| anyhow::anyhow!("GUI IPC state mutex poisoned"))?;
 
-    if state.writer.is_none() {
+    let needs_connect = {
+        let state = gui_ipc()
+            .lock()
+            .map_err(|_| anyhow::anyhow!("GUI IPC state mutex poisoned"))?;
+        state.writer.is_none()
+    };
+
+    if needs_connect {
         if is_unregister {
+            let mut state = gui_ipc()
+                .lock()
+                .map_err(|_| anyhow::anyhow!("GUI IPC state mutex poisoned"))?;
             clear_gui_writer(&mut state);
             return Ok(());
         }
-        if state.session.is_some() {
-            connect_gui_writer(&mut state, SEND_RECONNECT_WAIT_MS)?;
-        } else {
+        let has_session = gui_ipc()
+            .lock()
+            .map_err(|_| anyhow::anyhow!("GUI IPC state mutex poisoned"))?
+            .session
+            .is_some();
+        if !has_session {
             bail!("GUI IPC writer is not initialized");
         }
+        establish_gui_writer(SEND_RECONNECT_WAIT_MS)?;
     }
 
-    let writer = state
-        .writer
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("GUI IPC writer is not connected"))?;
+    let send_result = {
+        let state = gui_ipc()
+            .lock()
+            .map_err(|_| anyhow::anyhow!("GUI IPC state mutex poisoned"))?;
+        let writer = state
+            .writer
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("GUI IPC writer is not connected"))?;
+        writer.send(&message)
+    };
 
-    match writer.send(&message) {
+    match send_result {
         Ok(()) => {
             if is_unregister {
+                let mut state = gui_ipc()
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("GUI IPC state mutex poisoned"))?;
                 clear_gui_writer(&mut state);
             }
             Ok(())
@@ -338,26 +371,47 @@ pub fn send_to_tray(message: IpcMessage) -> Result<()> {
         Err(error) => {
             crate::log_msg(&format!("[ipc] send failed, reconnecting: {error:#}"));
             if is_unregister {
+                let mut state = gui_ipc()
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("GUI IPC state mutex poisoned"))?;
                 clear_gui_writer(&mut state);
                 return Ok(());
             }
-            if state.session.is_none() {
+            let has_session = gui_ipc()
+                .lock()
+                .map_err(|_| anyhow::anyhow!("GUI IPC state mutex poisoned"))?
+                .session
+                .is_some();
+            if !has_session {
                 return Err(error);
             }
-            connect_gui_writer(&mut state, SEND_RECONNECT_WAIT_MS)?;
-            state
+            establish_gui_writer(SEND_RECONNECT_WAIT_MS)?;
+            let mut state = gui_ipc()
+                .lock()
+                .map_err(|_| anyhow::anyhow!("GUI IPC state mutex poisoned"))?;
+            let writer = state
                 .writer
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("GUI IPC reconnect failed"))?
-                .send(&message)
+                .ok_or_else(|| anyhow::anyhow!("GUI IPC reconnect failed"))?;
+            writer.send(&message)?;
+            if is_unregister {
+                clear_gui_writer(&mut state);
+            }
+            Ok(())
         }
     }
 }
 
 pub fn send_to_tray_logged(message: IpcMessage, context: &str) {
-    if let Err(error) = send_to_tray(message) {
-        crate::log_msg(&format!("[ipc] {context} failed: {error:#}"));
-    }
+    let context = context.to_string();
+    std::thread::Builder::new()
+        .name("gui-ipc-send".into())
+        .spawn(move || {
+            if let Err(error) = send_to_tray(message) {
+                crate::log_msg(&format!("[ipc] {context} failed: {error:#}"));
+            }
+        })
+        .ok();
 }
 
 pub fn spawn_tray_server(
