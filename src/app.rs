@@ -167,7 +167,7 @@ impl MemoryCleanerApp {
             std::thread::Builder::new()
                 .name("gui-ipc-init".into())
                 .spawn(move || {
-                    if let Err(error) = win32::ipc::init_gui_writer(session) {
+                    if let Err(error) = win32::ipc::register_gui_session(session) {
                         crate::log_msg(&format!("[ipc] GUI register failed: {error:#}"));
                     }
                 })

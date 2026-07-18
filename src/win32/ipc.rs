@@ -1,6 +1,7 @@
 //! GUI ↔ tray-host IPC over a named pipe (GUI → tray) plus a tray-ready event.
 
 use std::io::ErrorKind;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -20,6 +21,7 @@ use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForSingleObj
 pub const TRAY_READY_EVENT_NAME: &str = "MemoryCleanr_TrayReady_v1";
 pub const GUI_TO_TRAY_PIPE_NAME: &str = r"\\.\pipe\MemoryCleanr.GuiToTray.v1";
 pub const TRAY_READY_WAIT_MS: u32 = 15_000;
+const SEND_RECONNECT_WAIT_MS: u32 = 3_000;
 
 const TAG_REGISTER_GUI: u8 = 1;
 const TAG_UNREGISTER_GUI: u8 = 2;
@@ -42,11 +44,21 @@ pub enum IpcMessage {
     SettingsChanged,
 }
 
-static GUI_SESSION: Mutex<Option<GuiSession>> = Mutex::new(None);
-static GUI_WRITER: OnceLock<Arc<GuiIpcWriter>> = OnceLock::new();
+static TRAY_GUI_SESSION: Mutex<Option<GuiSession>> = Mutex::new(None);
+static GUI_IPC: OnceLock<Mutex<GuiIpcState>> = OnceLock::new();
+
+#[derive(Default)]
+struct GuiIpcState {
+    writer: Option<GuiIpcWriter>,
+    session: Option<GuiSession>,
+}
 
 struct GuiIpcWriter {
     pipe: Mutex<isize>,
+}
+
+fn gui_ipc() -> &'static Mutex<GuiIpcState> {
+    GUI_IPC.get_or_init(|| Mutex::new(GuiIpcState::default()))
 }
 
 fn wide_name(name: &str) -> Vec<u16> {
@@ -150,13 +162,13 @@ unsafe fn read_frame(handle: HANDLE) -> Result<Vec<u8>> {
 }
 
 pub fn set_gui_session(session: Option<GuiSession>) {
-    if let Ok(mut guard) = GUI_SESSION.lock() {
+    if let Ok(mut guard) = TRAY_GUI_SESSION.lock() {
         *guard = session;
     }
 }
 
 pub fn gui_session() -> Option<GuiSession> {
-    GUI_SESSION.lock().ok().and_then(|guard| *guard)
+    TRAY_GUI_SESSION.lock().ok().and_then(|guard| *guard)
 }
 
 pub fn signal_tray_ready() {
@@ -234,33 +246,132 @@ impl GuiIpcWriter {
         }
     }
 
-    fn send(&self, message: IpcMessage) -> Result<()> {
-        let payload = encode_message(&message);
+    fn send(&self, message: &IpcMessage) -> Result<()> {
+        let payload = encode_message(message);
         let frame = encode_frame(&payload);
         let guard = self
             .pipe
             .lock()
             .map_err(|_| anyhow::anyhow!("IPC pipe mutex poisoned"))?;
+        if *guard == 0 {
+            bail!("IPC pipe handle is closed");
+        }
         unsafe { write_all(HANDLE(*guard as _), &frame) }
+    }
+
+    fn close(&self) {
+        if let Ok(mut guard) = self.pipe.lock()
+            && *guard != 0
+        {
+            unsafe {
+                let _ = CloseHandle(HANDLE(*guard as _));
+            }
+            *guard = 0;
+        }
     }
 }
 
-pub fn init_gui_writer(session: GuiSession) -> Result<()> {
-    let writer = Arc::new(GuiIpcWriter::connect(TRAY_READY_WAIT_MS)?);
-    writer.send(IpcMessage::RegisterGui {
-        pid: session.pid,
-        hwnd: session.hwnd,
-    })?;
-    let _ = GUI_WRITER.set(Arc::clone(&writer));
-    set_gui_session(Some(session));
+fn connect_gui_writer(state: &mut GuiIpcState, timeout_ms: u32) -> Result<()> {
+    if let Some(writer) = state.writer.as_ref() {
+        writer.close();
+    }
+    state.writer = None;
+
+    let writer = GuiIpcWriter::connect(timeout_ms)?;
+    if let Some(session) = state.session {
+        writer.send(&IpcMessage::RegisterGui {
+            pid: session.pid,
+            hwnd: session.hwnd,
+        })?;
+        set_gui_session(Some(session));
+    }
+    state.writer = Some(writer);
     Ok(())
 }
 
+fn clear_gui_writer(state: &mut GuiIpcState) {
+    if let Some(writer) = state.writer.as_ref() {
+        writer.close();
+    }
+    state.writer = None;
+    state.session = None;
+    set_gui_session(None);
+}
+
+/// Register the GUI window with the tray host and establish the IPC pipe.
+pub fn register_gui_session(session: GuiSession) -> Result<()> {
+    let mut state = gui_ipc()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("GUI IPC state mutex poisoned"))?;
+    state.session = Some(session);
+    connect_gui_writer(&mut state, TRAY_READY_WAIT_MS)
+}
+
+pub fn init_gui_writer(session: GuiSession) -> Result<()> {
+    register_gui_session(session)
+}
+
+pub fn is_gui_ipc_connected() -> bool {
+    gui_ipc()
+        .lock()
+        .ok()
+        .and_then(|state| state.writer.as_ref().map(|writer| {
+            writer
+                .pipe
+                .lock()
+                .ok()
+                .is_some_and(|handle| *handle != 0)
+        }))
+        .unwrap_or(false)
+}
+
 pub fn send_to_tray(message: IpcMessage) -> Result<()> {
-    let Some(writer) = GUI_WRITER.get() else {
-        bail!("GUI IPC writer is not initialized");
-    };
-    writer.send(message)
+    let is_unregister = matches!(message, IpcMessage::UnregisterGui);
+    let mut state = gui_ipc()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("GUI IPC state mutex poisoned"))?;
+
+    if state.writer.is_none() {
+        if is_unregister {
+            clear_gui_writer(&mut state);
+            return Ok(());
+        }
+        if state.session.is_some() {
+            connect_gui_writer(&mut state, SEND_RECONNECT_WAIT_MS)?;
+        } else {
+            bail!("GUI IPC writer is not initialized");
+        }
+    }
+
+    let writer = state
+        .writer
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("GUI IPC writer is not connected"))?;
+
+    match writer.send(&message) {
+        Ok(()) => {
+            if is_unregister {
+                clear_gui_writer(&mut state);
+            }
+            Ok(())
+        }
+        Err(error) => {
+            crate::log_msg(&format!("[ipc] send failed, reconnecting: {error:#}"));
+            if is_unregister {
+                clear_gui_writer(&mut state);
+                return Ok(());
+            }
+            if state.session.is_none() {
+                return Err(error);
+            }
+            connect_gui_writer(&mut state, SEND_RECONNECT_WAIT_MS)?;
+            state
+                .writer
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("GUI IPC reconnect failed"))?
+                .send(&message)
+        }
+    }
 }
 
 pub fn send_to_tray_logged(message: IpcMessage, context: &str) {
@@ -272,28 +383,67 @@ pub fn send_to_tray_logged(message: IpcMessage, context: &str) {
 pub fn spawn_tray_server(
     notify_hwnd: isize,
     pending: Arc<Mutex<Vec<IpcMessage>>>,
+    shutdown: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
     thread::Builder::new()
         .name("tray-ipc-server".into())
         .spawn(move || {
-            if let Err(error) = run_tray_server_loop(notify_hwnd, pending) {
+            if let Err(error) = run_tray_server_loop(notify_hwnd, pending, shutdown) {
                 crate::log_msg(&format!("[ipc] tray server exited: {error:#}"));
             }
         })
         .expect("spawn tray IPC server")
 }
 
-fn run_tray_server_loop(notify_hwnd: isize, pending: Arc<Mutex<Vec<IpcMessage>>>) -> Result<()> {
+/// Unblock `ConnectNamedPipe` / `ReadFile` so the tray IPC thread can exit.
+pub fn wake_tray_server(shutdown: &AtomicBool) {
+    shutdown.store(true, Ordering::Release);
+    poke_tray_pipe_client();
+}
+
+fn poke_tray_pipe_client() {
+    unsafe {
+        let name = wide_name(GUI_TO_TRAY_PIPE_NAME);
+        let handle = CreateFileW(
+            windows::core::PCWSTR(name.as_ptr()),
+            FILE_GENERIC_WRITE.0,
+            FILE_SHARE_NONE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            Some(HANDLE::default()),
+        );
+        if let Ok(handle) = handle {
+            let _ = CloseHandle(handle);
+        }
+    }
+}
+
+fn run_tray_server_loop(
+    notify_hwnd: isize,
+    pending: Arc<Mutex<Vec<IpcMessage>>>,
+    shutdown: Arc<AtomicBool>,
+) -> Result<()> {
     signal_tray_ready();
-    loop {
+    while !shutdown.load(Ordering::Acquire) {
         let pipe = unsafe { create_server_pipe()? };
         let connected = unsafe { ConnectNamedPipe(pipe, None) };
         if connected.is_err() && unsafe { windows::Win32::Foundation::GetLastError() }
             != ERROR_PIPE_CONNECTED
         {
             let _ = unsafe { CloseHandle(pipe) };
+            if shutdown.load(Ordering::Acquire) {
+                break;
+            }
             thread::sleep(Duration::from_millis(50));
             continue;
+        }
+
+        if shutdown.load(Ordering::Acquire) {
+            unsafe {
+                let _ = CloseHandle(pipe);
+            }
+            break;
         }
 
         let read_result = read_messages_from_pipe(pipe, &pending, notify_hwnd);
@@ -306,6 +456,7 @@ fn run_tray_server_loop(notify_hwnd: isize, pending: Arc<Mutex<Vec<IpcMessage>>>
             crate::log_msg("[ipc] GUI disconnected");
         }
     }
+    Ok(())
 }
 
 unsafe fn create_server_pipe() -> Result<HANDLE> {
@@ -401,5 +552,21 @@ mod tests {
     fn frame_length_prefix_is_little_endian() {
         let frame = encode_frame(&[TAG_SPIN_START]);
         assert_eq!(frame, vec![1, 0, 0, 0, TAG_SPIN_START]);
+    }
+
+    #[test]
+    fn unregister_without_writer_clears_state() {
+        let session = GuiSession {
+            pid: 42,
+            hwnd: 0x100,
+        };
+        {
+            let mut state = gui_ipc().lock().expect("ipc lock");
+            state.session = Some(session);
+        }
+        send_to_tray(IpcMessage::UnregisterGui).expect("unregister");
+        let state = gui_ipc().lock().expect("ipc lock");
+        assert!(state.writer.is_none());
+        assert!(state.session.is_none());
     }
 }

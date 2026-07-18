@@ -1,7 +1,7 @@
 #![windows_subsystem = "windows"]
 
 use memory_cleanr::{
-    locale, log_msg,
+    locale, log_msg, report_tray_startup_failure,
     runtime,
     settings::Settings,
     win32,
@@ -102,6 +102,8 @@ fn main() {
 
     if let Err(error) = win32::process::ensure_tray_host_running() {
         log_msg(&format!("[gui] failed to start tray host: {error:#}"));
+        report_tray_startup_failure(&error);
+        std::process::exit(1);
     }
 
     if let Err(error) = win32::single_instance::ensure_gui_singleton() {

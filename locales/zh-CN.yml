@@ -260,6 +260,13 @@ log.debug_enabled:
   zh-CN: "调试日志已启用，输出路径: %{path}"
   en: "Debug logging enabled, output path: %{path}"
 
+error.tray_startup_title:
+  zh-CN: "Memory Cleaner"
+  en: "Memory Cleaner"
+error.tray_startup_failed:
+  zh-CN: "无法启动系统托盘服务，应用程序将退出。\n\n%{detail}"
+  en: "Failed to start the system tray service. The application will exit.\n\n%{detail}"
+
 # Window title
 app.title:
   zh-CN: "Memory Cleanr"

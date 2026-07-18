@@ -148,12 +148,16 @@ pub fn run(settings: &Settings, tray_rx: TrayReceiver) -> Result<()> {
     );
     state.sync_tray();
 
-    let ipc_server = ipc::spawn_tray_server(message_loop.hwnd().0 as isize, Arc::clone(&ipc_pending));
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let ipc_server = ipc::spawn_tray_server(
+        message_loop.hwnd().0 as isize,
+        Arc::clone(&ipc_pending),
+        Arc::clone(&shutdown),
+    );
 
     let pending_for_thread = Arc::clone(&pending);
     let hwnd = message_loop.hwnd();
     let hwnd_token = hwnd.0 as isize;
-    let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_for_thread = Arc::clone(&shutdown);
 
     let forwarder = thread::Builder::new()
@@ -205,7 +209,7 @@ pub fn run(settings: &Settings, tray_rx: TrayReceiver) -> Result<()> {
             }
 
             for command in commands {
-                if dispatch_command(&mut state, command) {
+                if dispatch_command(&mut state, command, &shutdown) {
                     message_loop.request_quit();
                     return;
                 }
@@ -215,7 +219,7 @@ pub fn run(settings: &Settings, tray_rx: TrayReceiver) -> Result<()> {
     });
 
     drop(message_loop);
-    shutdown.store(true, Ordering::Release);
+    ipc::wake_tray_server(&shutdown);
     let _ = forwarder.join();
     let _ = ipc_server.join();
 
@@ -253,7 +257,11 @@ fn dispatch_ipc(state: &mut TrayHostState, message: IpcMessage) {
 }
 
 /// Returns `true` when the tray host should exit.
-fn dispatch_command(state: &mut TrayHostState, command: TrayCommand) -> bool {
+fn dispatch_command(
+    state: &mut TrayHostState,
+    command: TrayCommand,
+    shutdown: &AtomicBool,
+) -> bool {
     match command {
         TrayCommand::ActivateWindow => {
             if let Err(error) = crate::win32::process::activate_or_spawn_gui() {
@@ -282,7 +290,7 @@ fn dispatch_command(state: &mut TrayHostState, command: TrayCommand) -> bool {
                 false
             }
             "quit" => {
-                state.settings.save();
+                ipc::wake_tray_server(shutdown);
                 crate::win32::process::request_gui_shutdown();
                 true
             }
@@ -317,21 +325,34 @@ mod tests {
     #[test]
     fn dispatch_command_refreshes_tooltip_without_quitting() {
         let mut host = test_host();
-        assert!(!dispatch_command(&mut host, TrayCommand::RefreshTooltip));
+        let shutdown = AtomicBool::new(false);
+        assert!(!dispatch_command(
+            &mut host,
+            TrayCommand::RefreshTooltip,
+            &shutdown,
+        ));
     }
 
     #[test]
     fn dispatch_command_applies_spin_frame_without_quitting() {
         let mut host = test_host();
-        assert!(!dispatch_command(&mut host, TrayCommand::SetSpinFrame(1)));
+        let shutdown = AtomicBool::new(false);
+        assert!(!dispatch_command(
+            &mut host,
+            TrayCommand::SetSpinFrame(1),
+            &shutdown,
+        ));
     }
 
     #[test]
     fn dispatch_command_quits_on_menu_quit() {
         let mut host = test_host();
+        let shutdown = AtomicBool::new(false);
         assert!(dispatch_command(
             &mut host,
-            TrayCommand::MenuAction("quit".into())
+            TrayCommand::MenuAction("quit".into()),
+            &shutdown,
         ));
+        assert!(shutdown.load(Ordering::Acquire));
     }
 }

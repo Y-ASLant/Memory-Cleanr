@@ -1,3 +1,4 @@
+pub mod dialog;
 pub mod hotkey;
 pub mod ipc;
 pub mod message_loop;
