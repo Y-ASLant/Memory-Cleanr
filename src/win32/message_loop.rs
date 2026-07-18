@@ -10,6 +10,17 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 pub const WM_APP_TRAY_CMD: u32 = windows::Win32::UI::WindowsAndMessaging::WM_USER + 42;
+
+pub fn post_tray_cmd_to_hwnd(notify_hwnd: isize) {
+    unsafe {
+        let _ = PostMessageW(
+            Some(windows::Win32::Foundation::HWND(notify_hwnd as *mut _)),
+            WM_APP_TRAY_CMD,
+            WPARAM(0),
+            LPARAM(0),
+        );
+    }
+}
 const TIMER_ID: usize = 1;
 const TIMER_INTERVAL_MS: u32 = 500;
 
@@ -43,12 +54,6 @@ impl MessageLoop {
     pub fn start_timer(&self) {
         unsafe {
             let _ = SetTimer(Some(self.hwnd), TIMER_ID, TIMER_INTERVAL_MS, None);
-        }
-    }
-
-    pub fn post_tray_command(&self) {
-        unsafe {
-            let _ = PostMessageW(Some(self.hwnd), WM_APP_TRAY_CMD, WPARAM(0), LPARAM(0));
         }
     }
 

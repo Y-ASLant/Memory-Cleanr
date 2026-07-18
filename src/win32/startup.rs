@@ -11,6 +11,7 @@ use windows::core::{Error, PCWSTR};
 
 use crate::settings::Settings;
 use crate::version::PROCESS_BASE_NAME;
+use crate::win32::wide::wide_null;
 
 const RUN_KEY_PATH: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
@@ -35,10 +36,6 @@ pub fn elevation_relaunch_args_for(is_startup_launch: bool) -> String {
 }
 
 const ELEVATED_ARG: &str = "--elevated";
-
-fn wide_null(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
 
 fn win32_ok(status: windows::Win32::Foundation::WIN32_ERROR) -> Result<()> {
     if status.is_ok() {

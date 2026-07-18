@@ -5,7 +5,6 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
-use rust_i18n::t;
 
 use crate::locale;
 use crate::memory::MemorySection;
@@ -34,13 +33,7 @@ impl TrayHostState {
         notify_hwnd: isize,
     ) -> Self {
         locale::apply(&settings);
-        crate::log::set_debug_enabled(settings.debug_logging);
-        if settings.debug_logging {
-            crate::log_msg(&format!(
-                "[log] debug enabled path={}",
-                crate::log::log_file_path().display()
-            ));
-        }
+        crate::log::init_from_settings(&settings);
 
         let show_virtual = settings.show_virtual_memory;
         let (physical, virtual_mem) = memory::initial_sections(show_virtual);
@@ -58,9 +51,8 @@ impl TrayHostState {
     fn sync_tray(&self) {
         let virtual_mem =
             memory::virtual_for_display(&self.virtual_mem, self.settings.show_virtual_memory);
-        let window_visible = ipc::gui_session()
-            .is_some_and(|session| crate::win32::window::is_hwnd_visible(session.hwnd))
-            || crate::win32::window::is_gui_window_visible();
+        let window_visible = crate::win32::window::resolve_gui_hwnd()
+            .is_some_and(|hwnd| crate::win32::window::is_hwnd_visible(hwnd.0 as isize));
         tray::sync_display(&self.physical, virtual_mem, window_visible);
     }
 
@@ -92,42 +84,19 @@ impl TrayHostState {
         thread::Builder::new()
             .name("tray-optimize".into())
             .spawn(move || {
-                if settings.show_optimization_notifications
-                    && let Err(e) = crate::win32::notification::show(
-                        &t!("notification.optimize_start_title"),
-                        &t!("notification.optimize_start_body"),
-                    )
-                {
-                    crate::log_msg(&format!("[notification] failed: {e:#}"));
-                }
+                optimize_runner::notify_optimize_start(&settings);
 
                 let result = optimize_runner::run(&settings, avail_before, |_update| {});
 
                 tray::stop_spin();
                 is_optimizing.store(false, Ordering::Release);
 
-                if settings.show_optimization_notifications
-                    && !result.status_message.is_empty()
-                    && result.status_message != t!("tooltip.select_areas")
-                    && let Err(e) = crate::win32::notification::show(
-                        &t!("notification.optimize_title"),
-                        &result.status_message,
-                    )
-                {
-                    crate::log_msg(&format!("[notification] failed: {e:#}"));
-                }
+                optimize_runner::notify_optimize_complete(&settings, &result);
 
                 if let Ok(mut queue) = pending.lock() {
                     queue.push(TrayCommand::RefreshTooltip);
                 }
-                unsafe {
-                    let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
-                        Some(windows::Win32::Foundation::HWND(notify_hwnd as *mut _)),
-                        crate::win32::message_loop::WM_APP_TRAY_CMD,
-                        windows::Win32::Foundation::WPARAM(0),
-                        windows::Win32::Foundation::LPARAM(0),
-                    );
-                }
+                crate::win32::message_loop::post_tray_cmd_to_hwnd(notify_hwnd);
             })
             .ok();
     }
@@ -174,14 +143,7 @@ pub fn run(settings: &Settings, tray_rx: TrayReceiver) -> Result<()> {
                         if let Ok(mut queue) = pending_for_thread.lock() {
                             queue.push(command);
                         }
-                        unsafe {
-                            let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
-                                Some(windows::Win32::Foundation::HWND(hwnd_token as *mut _)),
-                                crate::win32::message_loop::WM_APP_TRAY_CMD,
-                                windows::Win32::Foundation::WPARAM(0),
-                                windows::Win32::Foundation::LPARAM(0),
-                            );
-                        }
+                        crate::win32::message_loop::post_tray_cmd_to_hwnd(hwnd_token);
                     }
                     Err(RecvTimeoutError::Timeout) => {}
                     Err(RecvTimeoutError::Disconnected) => break,
@@ -233,7 +195,7 @@ const WM_APP_TRAY_CMD: u32 = crate::win32::message_loop::WM_APP_TRAY_CMD;
 fn reload_settings(state: &mut TrayHostState) {
     state.settings = Settings::load();
     locale::apply(&state.settings);
-    crate::log::set_debug_enabled(state.settings.debug_logging);
+    crate::log::sync_debug_settings(&state.settings);
     crate::win32::hotkey::sync(&state.settings);
     state.refresh_memory();
     state.sync_tray();
@@ -264,9 +226,11 @@ fn dispatch_command(
 ) -> bool {
     match command {
         TrayCommand::ActivateWindow => {
-            if let Err(error) = crate::win32::process::activate_or_spawn_gui() {
-                crate::log_msg(&format!("[tray] activate GUI failed: {error:#}"));
-            }
+            thread::spawn(|| {
+                if let Err(error) = crate::win32::process::activate_or_spawn_gui() {
+                    crate::log_msg(&format!("[tray] activate GUI failed: {error:#}"));
+                }
+            });
             false
         }
         TrayCommand::RefreshTooltip => {
@@ -278,24 +242,19 @@ fn dispatch_command(
             state.spawn_optimize();
             false
         }
-        TrayCommand::MenuAction(action) => match action.as_str() {
-            "optimize" => {
-                state.spawn_optimize();
-                false
-            }
-            "toggle_window" => {
+        TrayCommand::ToggleWindow => {
+            thread::spawn(|| {
                 if let Err(error) = crate::win32::process::toggle_gui_window() {
                     crate::log_msg(&format!("[tray] toggle GUI failed: {error:#}"));
                 }
-                false
-            }
-            "quit" => {
-                ipc::wake_tray_server(shutdown);
-                crate::win32::process::request_gui_shutdown();
-                true
-            }
-            _ => false,
-        },
+            });
+            false
+        }
+        TrayCommand::Quit => {
+            ipc::wake_tray_server(shutdown);
+            crate::win32::process::request_gui_shutdown();
+            true
+        }
         TrayCommand::SetSpinFrame(quarters) => {
             tray::apply_spin_frame(quarters);
             false
@@ -350,7 +309,7 @@ mod tests {
         let shutdown = AtomicBool::new(false);
         assert!(dispatch_command(
             &mut host,
-            TrayCommand::MenuAction("quit".into()),
+            TrayCommand::Quit,
             &shutdown,
         ));
         assert!(shutdown.load(Ordering::Acquire));

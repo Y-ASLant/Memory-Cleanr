@@ -3,7 +3,7 @@ use gpui::Window;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DestroyWindow, EnumWindows, GWL_EXSTYLE, GWL_STYLE, GetWindowLongPtrW, GetWindowTextLengthW,
+    EnumWindows, GWL_EXSTYLE, GWL_STYLE, GetWindowLongPtrW, GetWindowTextLengthW,
     GetWindowTextW, HWND_NOTOPMOST, HWND_TOPMOST, IsIconic, IsWindow, IsWindowVisible,
     PostMessageW, SetForegroundWindow, SHOW_WINDOW_CMD, SW_HIDE, SW_RESTORE, SW_SHOW,
     SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos,
@@ -47,18 +47,6 @@ pub(crate) fn hwnd_from_window(window: &Window) -> Result<HWND> {
     Ok(HWND(win32.hwnd.get() as _))
 }
 
-/// Destroy the native window immediately on the UI thread.
-///
-/// GPUI normally destroys windows asynchronously after its message loop stops, which leaves
-/// a visible "Not Responding" shell when we hand off to the tray host in the same process.
-pub fn destroy_window(window: &Window) -> Result<()> {
-    destroy_hwnd(hwnd_from_window(window)?)
-}
-
-pub fn destroy_hwnd_raw(hwnd: isize) -> Result<()> {
-    destroy_hwnd(HWND(hwnd as _))
-}
-
 pub fn hide_hwnd_raw(hwnd: isize) -> Result<()> {
     unsafe {
         let hwnd = HWND(hwnd as _);
@@ -66,25 +54,6 @@ pub fn hide_hwnd_raw(hwnd: isize) -> Result<()> {
             let _ = ShowWindow(hwnd, SW_HIDE);
         }
     }
-    Ok(())
-}
-
-pub fn destroy_hwnd(hwnd: HWND) -> Result<()> {
-    unsafe {
-        if IsWindow(Some(hwnd)).as_bool() {
-            DestroyWindow(hwnd).context("DestroyWindow failed")?;
-        }
-    }
-    Ok(())
-}
-
-/// Hide the window to the notification area without tearing down GPUI yet.
-pub fn hide_to_notification_area(window: &Window) -> Result<()> {
-    let hwnd = hwnd_from_window(window)?;
-    apply_extended_style(hwnd, |style| {
-        (style & !WS_EX_APPWINDOW.0) | WS_EX_TOOLWINDOW.0
-    })?;
-    show_window(hwnd, SW_HIDE)?;
     Ok(())
 }
 
@@ -165,6 +134,22 @@ unsafe extern "system" fn enum_gui_windows(hwnd: HWND, lparam: LPARAM) -> window
     windows::core::BOOL::from(true)
 }
 
+/// IPC-registered GUI window handle (does not enumerate windows).
+pub fn registered_gui_hwnd() -> Option<HWND> {
+    let session = crate::win32::ipc::gui_session()?;
+    let hwnd = HWND(session.hwnd as _);
+    if unsafe { IsWindow(Some(hwnd)).as_bool() } {
+        Some(hwnd)
+    } else {
+        None
+    }
+}
+
+/// Registered GUI window, or enumerate by title when IPC has not registered yet.
+pub fn resolve_gui_hwnd() -> Option<HWND> {
+    registered_gui_hwnd().or_else(find_gui_hwnd)
+}
+
 /// Locate the top-level GUI window owned by another process.
 pub fn find_gui_hwnd() -> Option<HWND> {
     let mut state = FindGuiWindow { found: None };
@@ -178,10 +163,7 @@ pub fn find_gui_hwnd() -> Option<HWND> {
 }
 
 pub fn is_gui_window_visible() -> bool {
-    if let Some(session) = crate::win32::ipc::gui_session() {
-        return is_hwnd_visible(session.hwnd);
-    }
-    find_gui_hwnd().is_some_and(|hwnd| unsafe { IsWindowVisible(hwnd).as_bool() })
+    resolve_gui_hwnd().is_some_and(|hwnd| unsafe { IsWindowVisible(hwnd).as_bool() })
 }
 
 pub fn is_hwnd_visible(hwnd: isize) -> bool {
@@ -220,24 +202,22 @@ pub fn request_hwnd_close(hwnd: isize) -> bool {
 
 /// Bring an existing GUI window to the foreground.
 pub fn activate_gui_window() -> bool {
-    if let Some(session) = crate::win32::ipc::gui_session() {
-        return activate_hwnd(session.hwnd);
+    if let Some(hwnd) = registered_gui_hwnd() {
+        return activate_hwnd(hwnd.0 as isize);
     }
-    let Some(hwnd) = find_gui_hwnd() else {
-        return false;
-    };
-    activate_hwnd(hwnd.0 as isize)
+    find_gui_hwnd()
+        .map(|hwnd| activate_hwnd(hwnd.0 as isize))
+        .unwrap_or(false)
 }
 
 /// Ask the GUI process to close via `WM_CLOSE` (respects close-to-tray settings).
 pub fn request_gui_close() -> bool {
-    if let Some(session) = crate::win32::ipc::gui_session() {
-        return request_hwnd_close(session.hwnd);
+    if let Some(hwnd) = registered_gui_hwnd() {
+        return request_hwnd_close(hwnd.0 as isize);
     }
-    let Some(hwnd) = find_gui_hwnd() else {
-        return false;
-    };
-    request_hwnd_close(hwnd.0 as isize)
+    find_gui_hwnd()
+        .map(|hwnd| request_hwnd_close(hwnd.0 as isize))
+        .unwrap_or(false)
 }
 
 /// Remove the maximize/restore button from the window title bar.

@@ -7,10 +7,6 @@ use crate::settings::Settings;
 actions!(wmc_gpui, [Quit]);
 
 pub fn run(settings: Settings) -> Result<()> {
-    run_gpui(settings)
-}
-
-fn run_gpui(settings: Settings) -> Result<()> {
     gpui_platform::application()
         .with_assets(gpui_component_assets::Assets)
         .with_quit_mode(QuitMode::Explicit)

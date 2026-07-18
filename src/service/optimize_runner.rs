@@ -20,6 +20,67 @@ pub struct OptimizeRunResult {
     pub has_errors: bool,
 }
 
+pub fn notify_optimize_start(settings: &Settings) {
+    if !settings.show_optimization_notifications {
+        return;
+    }
+    if let Err(error) = crate::win32::notification::show(
+        &t!("notification.optimize_start_title"),
+        &t!("notification.optimize_start_body"),
+    ) {
+        crate::log_msg(&format!("[notification] failed: {error:#}"));
+    }
+}
+
+pub fn notify_optimize_complete(settings: &Settings, result: &OptimizeRunResult) {
+    if !settings.show_optimization_notifications {
+        return;
+    }
+    if result.status_message.is_empty() || result.status_message == t!("tooltip.select_areas") {
+        return;
+    }
+    if let Err(error) = crate::win32::notification::show(
+        &t!("notification.optimize_title"),
+        &result.status_message,
+    ) {
+        crate::log_msg(&format!("[notification] failed: {error:#}"));
+    }
+}
+
+struct StepProgress {
+    step_index: usize,
+    total_steps: usize,
+}
+
+impl StepProgress {
+    fn new(step_index: usize, total_steps: usize) -> Self {
+        Self {
+            step_index,
+            total_steps,
+        }
+    }
+
+    fn base(&self) -> f32 {
+        self.step_index as f32 / self.total_steps as f32
+    }
+
+    fn span(&self) -> f32 {
+        1.0 / self.total_steps as f32
+    }
+
+    fn start_percent(&self) -> f32 {
+        self.base() * 100.0
+    }
+
+    fn end_percent(&self) -> f32 {
+        (self.base() + self.span()) * 100.0
+    }
+
+    fn sub_percent(&self, sub_index: usize, sub_total: usize) -> f32 {
+        (self.base() + sub_index as f32 / sub_total as f32 * self.span()) * 100.0
+    }
+}
+
 pub fn run<F>(settings: &Settings, avail_before: u64, mut on_progress: F) -> OptimizeRunResult
 where
     F: FnMut(OptimizeStepUpdate),
@@ -101,12 +162,11 @@ fn run_step<F>(
 where
     F: FnMut(OptimizeStepUpdate),
 {
-    let step_base = step_index as f32 / total_steps as f32;
-    let step_span = 1.0 / total_steps as f32;
+    let progress = StepProgress::new(step_index, total_steps);
 
     on_progress(OptimizeStepUpdate {
         step_label: t!("optimize.step", name = name.to_string()).to_string(),
-        percent: step_base * 100.0,
+        percent: progress.start_percent(),
     });
 
     let result = run();
@@ -116,7 +176,7 @@ where
 
     on_progress(OptimizeStepUpdate {
         step_label: t!("optimize.step", name = name.to_string()).to_string(),
-        percent: (step_base + step_span) * 100.0,
+        percent: progress.end_percent(),
     });
 
     result.is_ok()
@@ -131,14 +191,13 @@ fn run_modified_file_cache_step<F>(
 where
     F: FnMut(OptimizeStepUpdate),
 {
-    let step_base = step_index as f32 / total_steps as f32;
-    let step_span = 1.0 / total_steps as f32;
+    let progress = StepProgress::new(step_index, total_steps);
 
     let session = match VolumeFlushSession::open() {
         Ok(session) if session.is_empty() => {
             on_progress(OptimizeStepUpdate {
                 step_label: t!("optimize.step", name = name.to_string()).to_string(),
-                percent: (step_base + step_span) * 100.0,
+                percent: progress.end_percent(),
             });
             return true;
         }
@@ -149,7 +208,7 @@ where
             ));
             on_progress(OptimizeStepUpdate {
                 step_label: t!("optimize.step", name = name.to_string()).to_string(),
-                percent: (step_base + step_span) * 100.0,
+                percent: progress.end_percent(),
             });
             return false;
         }
@@ -160,7 +219,6 @@ where
 
     for index in 0..volume_total {
         let volume_label = session.label(index).to_string();
-        let sub_base = index as f32 / volume_total as f32;
 
         on_progress(OptimizeStepUpdate {
             step_label: t!(
@@ -171,7 +229,7 @@ where
                 total = volume_total.to_string()
             )
             .to_string(),
-            percent: (step_base + sub_base * step_span) * 100.0,
+            percent: progress.sub_percent(index, volume_total),
         });
 
         report.record(&volume_label, session.flush(index));
@@ -185,7 +243,7 @@ where
                 total = volume_total.to_string()
             )
             .to_string(),
-            percent: (step_base + (index + 1) as f32 / volume_total as f32 * step_span) * 100.0,
+            percent: progress.sub_percent(index + 1, volume_total),
         });
     }
 

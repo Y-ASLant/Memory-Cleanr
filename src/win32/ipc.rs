@@ -18,6 +18,8 @@ use windows::Win32::System::Pipes::{
 };
 use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForSingleObject};
 
+use crate::win32::wide::wide_null;
+
 pub const TRAY_READY_EVENT_NAME: &str = "MemoryCleanr_TrayReady_v1";
 pub const GUI_TO_TRAY_PIPE_NAME: &str = r"\\.\pipe\MemoryCleanr.GuiToTray.v1";
 pub const TRAY_READY_WAIT_MS: u32 = 15_000;
@@ -59,10 +61,6 @@ struct GuiIpcWriter {
 
 fn gui_ipc() -> &'static Mutex<GuiIpcState> {
     GUI_IPC.get_or_init(|| Mutex::new(GuiIpcState::default()))
-}
-
-fn wide_name(name: &str) -> Vec<u16> {
-    name.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 pub fn encode_message(message: &IpcMessage) -> Vec<u8> {
@@ -173,7 +171,7 @@ pub fn gui_session() -> Option<GuiSession> {
 
 pub fn signal_tray_ready() {
     unsafe {
-        let name = wide_name(TRAY_READY_EVENT_NAME);
+        let name = wide_null(TRAY_READY_EVENT_NAME);
         if let Ok(event) = CreateEventW(None, true, true, windows::core::PCWSTR(name.as_ptr())) {
             let _ = SetEvent(event);
             let _ = CloseHandle(event);
@@ -183,7 +181,7 @@ pub fn signal_tray_ready() {
 
 pub fn wait_tray_ready(timeout_ms: u32) -> bool {
     unsafe {
-        let name = wide_name(TRAY_READY_EVENT_NAME);
+        let name = wide_null(TRAY_READY_EVENT_NAME);
         let Ok(event) = CreateEventW(
             None,
             true,
@@ -224,7 +222,7 @@ impl GuiIpcWriter {
 
     fn try_open_pipe() -> Result<Self> {
         unsafe {
-            let name = wide_name(GUI_TO_TRAY_PIPE_NAME);
+            let name = wide_null(GUI_TO_TRAY_PIPE_NAME);
             let handle = CreateFileW(
                 windows::core::PCWSTR(name.as_ptr()),
                 FILE_GENERIC_WRITE.0,
@@ -307,24 +305,6 @@ pub fn register_gui_session(session: GuiSession) -> Result<()> {
     connect_gui_writer(&mut state, TRAY_READY_WAIT_MS)
 }
 
-pub fn init_gui_writer(session: GuiSession) -> Result<()> {
-    register_gui_session(session)
-}
-
-pub fn is_gui_ipc_connected() -> bool {
-    gui_ipc()
-        .lock()
-        .ok()
-        .and_then(|state| state.writer.as_ref().map(|writer| {
-            writer
-                .pipe
-                .lock()
-                .ok()
-                .is_some_and(|handle| *handle != 0)
-        }))
-        .unwrap_or(false)
-}
-
 pub fn send_to_tray(message: IpcMessage) -> Result<()> {
     let is_unregister = matches!(message, IpcMessage::UnregisterGui);
     let mut state = gui_ipc()
@@ -403,7 +383,7 @@ pub fn wake_tray_server(shutdown: &AtomicBool) {
 
 fn poke_tray_pipe_client() {
     unsafe {
-        let name = wide_name(GUI_TO_TRAY_PIPE_NAME);
+        let name = wide_null(GUI_TO_TRAY_PIPE_NAME);
         let handle = CreateFileW(
             windows::core::PCWSTR(name.as_ptr()),
             FILE_GENERIC_WRITE.0,
@@ -460,7 +440,7 @@ fn run_tray_server_loop(
 }
 
 unsafe fn create_server_pipe() -> Result<HANDLE> {
-    let name = wide_name(GUI_TO_TRAY_PIPE_NAME);
+    let name = wide_null(GUI_TO_TRAY_PIPE_NAME);
     let handle = unsafe {
         CreateNamedPipeW(
             windows::core::PCWSTR(name.as_ptr()),
@@ -505,14 +485,7 @@ fn read_messages_from_pipe(
 }
 
 fn post_ipc_notify(notify_hwnd: isize) {
-    unsafe {
-        let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
-            Some(windows::Win32::Foundation::HWND(notify_hwnd as *mut _)),
-            crate::win32::message_loop::WM_APP_TRAY_CMD,
-            windows::Win32::Foundation::WPARAM(0),
-            windows::Win32::Foundation::LPARAM(0),
-        );
-    }
+    crate::win32::message_loop::post_tray_cmd_to_hwnd(notify_hwnd);
 }
 
 #[cfg(test)]

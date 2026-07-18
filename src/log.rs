@@ -8,6 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 static DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 static LOG_LOCK: Mutex<()> = Mutex::new(());
 
+use crate::settings::Settings;
+
 /// Drop log lines whose `[unix_secs.millis]` timestamp is older than this.
 pub const LOG_RETENTION_SECS: u64 = 7 * 24 * 60 * 60;
 
@@ -28,6 +30,26 @@ pub fn log_msg(msg: &str) {
 
 pub fn set_debug_enabled(enabled: bool) {
     DEBUG_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+/// Apply `settings.debug_logging` at process/session startup and log the path once.
+pub fn init_from_settings(settings: &Settings) {
+    apply_debug_settings(settings, true);
+}
+
+/// Apply `settings.debug_logging` without emitting the startup log line.
+pub fn sync_debug_settings(settings: &Settings) {
+    apply_debug_settings(settings, false);
+}
+
+fn apply_debug_settings(settings: &Settings, log_startup: bool) {
+    set_debug_enabled(settings.debug_logging);
+    if settings.debug_logging && log_startup {
+        log_msg(&rust_i18n::t!(
+            "log.debug_enabled",
+            path = log_file_path().display().to_string()
+        ));
+    }
 }
 
 pub fn log_file_path() -> PathBuf {

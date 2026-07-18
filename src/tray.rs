@@ -35,7 +35,8 @@ pub enum TrayCommand {
     RefreshTooltip,
     /// Global hotkey (`RegisterHotKey`) triggered memory cleanup.
     Optimize,
-    MenuAction(String),
+    ToggleWindow,
+    Quit,
     /// Tray icon spin animation frame (0–3). Applied on the tray-host or GPUI thread.
     SetSpinFrame(u32),
 }
@@ -81,14 +82,6 @@ impl Tray {
 
         Ok(())
     }
-}
-
-pub fn install(tx: Sender<TrayCommand>) -> Result<(), Box<dyn std::error::Error>> {
-    Tray::install(tx)
-}
-
-pub fn is_installed() -> bool {
-    TRAY_INSTALLED.load(Ordering::Acquire)
 }
 
 fn tray() -> Option<&'static Tray> {
@@ -238,8 +231,15 @@ fn install_event_handlers(tx: Sender<TrayCommand>) {
     }));
 
     MenuEvent::set_event_handler(Some({
+        let tx = tx.clone();
         move |event: MenuEvent| {
-            let _ = tx.send(TrayCommand::MenuAction(event.id().0.clone()));
+            let command = match event.id().0.as_str() {
+                "optimize" => TrayCommand::Optimize,
+                "toggle_window" => TrayCommand::ToggleWindow,
+                "quit" => TrayCommand::Quit,
+                _ => return,
+            };
+            let _ = tx.send(command);
         }
     }));
 }

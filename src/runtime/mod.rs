@@ -15,7 +15,7 @@ pub fn ensure_tray(
     command_tx: &mpsc::Sender<crate::tray::TrayCommand>,
     settings: &crate::settings::Settings,
 ) -> Result<()> {
-    crate::tray::install(command_tx.clone()).map_err(|error| anyhow::anyhow!("{error}"))?;
+    crate::tray::Tray::install(command_tx.clone()).map_err(|error| anyhow::anyhow!("{error}"))?;
     crate::win32::hotkey::bind_command_sender(command_tx.clone());
     crate::win32::hotkey::sync(settings);
     Ok(())

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::mem::MaybeUninit;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -294,18 +294,21 @@ pub fn ensure_tray_host_running() -> Result<()> {
 
 /// Activate an existing GUI window or spawn a new GUI process.
 pub fn activate_or_spawn_gui() -> Result<()> {
-    if let Some(session) = crate::win32::ipc::gui_session() {
-        if !crate::win32::window::activate_hwnd(session.hwnd) {
-            crate::log_msg("[tray] registered GUI hwnd is no longer valid");
+    if let Some(hwnd) = crate::win32::window::registered_gui_hwnd() {
+        if crate::win32::window::activate_hwnd(hwnd.0 as isize) {
+            return Ok(());
         }
-        return Ok(());
+        crate::log_msg("[tray] registered GUI hwnd is no longer valid");
     }
 
     if crate::win32::single_instance::is_gui_running() {
-        if !crate::win32::window::activate_gui_window() {
-            crate::log_msg("[tray] GUI running but window not registered yet");
+        crate::log_msg("[tray] waiting for GUI process to exit before activate");
+        if !crate::win32::single_instance::wait_for_gui_exit(
+            crate::win32::single_instance::GUI_EXIT_WAIT_MS,
+        ) {
+            crate::log_msg("[tray] GUI shutdown timed out");
+            return Ok(());
         }
-        return Ok(());
     }
 
     spawn_gui_instance()
@@ -313,25 +316,19 @@ pub fn activate_or_spawn_gui() -> Result<()> {
 
 /// Toggle the GUI window: spawn, hide via close, or activate.
 pub fn toggle_gui_window() -> Result<()> {
-    if let Some(session) = crate::win32::ipc::gui_session() {
-        if crate::win32::window::is_hwnd_visible(session.hwnd) {
-            if !crate::win32::window::request_hwnd_close(session.hwnd) {
+    if let Some(hwnd) = crate::win32::window::registered_gui_hwnd() {
+        if crate::win32::window::is_hwnd_visible(hwnd.0 as isize) {
+            if !crate::win32::window::request_hwnd_close(hwnd.0 as isize) {
                 crate::log_msg("[tray] failed to request GUI close");
             }
-        } else if !crate::win32::window::activate_hwnd(session.hwnd) {
+        } else if !crate::win32::window::activate_hwnd(hwnd.0 as isize) {
             crate::log_msg("[tray] failed to activate hidden GUI window");
         }
         return Ok(());
     }
 
     if crate::win32::single_instance::is_gui_running() {
-        if crate::win32::window::is_gui_window_visible() {
-            if !crate::win32::window::request_gui_close() {
-                crate::log_msg("[tray] failed to request GUI close");
-            }
-        } else if !crate::win32::window::activate_gui_window() {
-            crate::log_msg("[tray] failed to activate hidden GUI window");
-        }
+        crate::log_msg("[tray] GUI unavailable while shutting down");
         return Ok(());
     }
 
@@ -429,13 +426,6 @@ pub fn gui_instance_launch_spec() -> Result<InstanceLaunchSpec> {
     })
 }
 
-pub fn launch_spec_for_path(exe: &Path, args: &[&str]) -> InstanceLaunchSpec {
-    InstanceLaunchSpec {
-        exe: exe.to_path_buf(),
-        args: args.iter().map(|arg| (*arg).to_string()).collect(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -495,20 +485,5 @@ mod tests {
     fn gui_instance_launch_spec_has_no_extra_args() {
         let spec = gui_instance_launch_spec().expect("current_exe");
         assert!(spec.args.is_empty());
-    }
-
-    #[test]
-    fn launch_spec_for_path_builds_expected_command() {
-        let spec = launch_spec_for_path(
-            Path::new(r"C:\Tools\MemoryCleanr.exe"),
-            &[crate::win32::startup::STARTUP_ARG],
-        );
-        assert_eq!(
-            spec,
-            InstanceLaunchSpec {
-                exe: PathBuf::from(r"C:\Tools\MemoryCleanr.exe"),
-                args: vec![crate::win32::startup::STARTUP_ARG.to_string()],
-            }
-        );
     }
 }

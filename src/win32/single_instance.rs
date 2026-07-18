@@ -2,7 +2,7 @@ use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
 
-use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError};
 use windows::Win32::System::Threading::{
     CreateMutexW, OpenMutexW, SYNCHRONIZATION_ACCESS_RIGHTS,
 };
@@ -18,6 +18,8 @@ pub const GUI_EXIT_WAIT_MS: u32 = 5_000;
 
 static HELD_MUTEX: OnceLock<isize> = OnceLock::new();
 
+use crate::win32::wide::wide_null;
+
 #[derive(Clone, Copy)]
 pub enum InstanceRole {
     Tray,
@@ -32,14 +34,9 @@ impl InstanceRole {
         }
     }
 }
-
-fn wide_name(name: &str) -> Vec<u16> {
-    name.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
 fn open_existing_mutex(name: &str) -> bool {
     unsafe {
-        let wide = wide_name(name);
+        let wide = wide_null(name);
         let handle = OpenMutexW(
             SYNCHRONIZATION_ACCESS_RIGHTS(SYNCHRONIZE),
             false,
@@ -64,10 +61,6 @@ pub fn is_gui_running() -> bool {
     open_existing_mutex(GUI_MUTEX_NAME)
 }
 
-pub fn tray_startup_retry_limit() -> u32 {
-    TRAY_STARTUP_RETRIES
-}
-
 /// Acquire the tray singleton. Retries briefly so a dying tray host can release the mutex.
 pub fn ensure_tray_singleton() -> Result<(), Box<dyn std::error::Error>> {
     acquire_singleton(InstanceRole::Tray, TRAY_STARTUP_RETRIES)
@@ -79,7 +72,7 @@ pub fn ensure_gui_singleton() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn acquire_singleton(role: InstanceRole, retries: u32) -> Result<(), Box<dyn std::error::Error>> {
-    let mutex_name = wide_name(role.mutex_name());
+    let mutex_name = wide_null(role.mutex_name());
 
     for attempt in 0..retries {
         unsafe {
@@ -132,18 +125,13 @@ fn wait_for_mutex(name: &str, wait_until_present: bool, timeout_ms: u32) -> bool
     open_existing_mutex(name) == wait_until_present
 }
 
-#[allow(dead_code)]
-pub fn held_mutex_handle() -> Option<HANDLE> {
-    HELD_MUTEX.get().map(|value| HANDLE(*value as _))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn tray_startup_retry_limit_is_positive() {
-        assert_eq!(tray_startup_retry_limit(), TRAY_STARTUP_RETRIES);
+    fn tray_startup_retries_is_positive() {
+        assert!(TRAY_STARTUP_RETRIES > 0);
     }
 
     #[test]

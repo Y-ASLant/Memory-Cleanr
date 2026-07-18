@@ -23,12 +23,6 @@ const SETTINGS_SAVE_DEBOUNCE: Duration = Duration::from_millis(300);
 const OPTIMIZE_RESULT_DISPLAY: Duration = Duration::from_secs(5);
 const MEMORY_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
-async fn show_toast(title: String, body: String) {
-    if let Err(e) = smol::unblock(move || win32::notification::show(&title, &body)).await {
-        crate::log_msg(&format!("[notification] failed: {e:#}"));
-    }
-}
-
 const WINDOW_WIDTH: f32 = 520.;
 const WINDOW_MIN_WIDTH: f32 = 520.;
 pub const CONTENT_PADDING: f32 = 6.;
@@ -117,13 +111,7 @@ pub struct MemoryCleanerApp {
 
 impl MemoryCleanerApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>, settings: Settings) -> Self {
-        crate::log::set_debug_enabled(settings.debug_logging);
-        if settings.debug_logging {
-            crate::log::write(&t!(
-                "log.debug_enabled",
-                path = crate::log::log_file_path().display().to_string()
-            ));
-        }
+        crate::log::init_from_settings(&settings);
 
         let show_virtual = settings.show_virtual_memory;
         let (physical, virtual_mem) = memory::initial_sections(show_virtual);
@@ -263,17 +251,18 @@ impl MemoryCleanerApp {
         let action = self.close_action(source);
         self.stop_memory_refresh();
         self.hide_main_window();
+        std::thread::Builder::new()
+            .name("gui-ipc-unregister".into())
+            .spawn(|| {
+                win32::ipc::send_to_tray_logged(IpcMessage::UnregisterGui, "unregister GUI");
+            })
+            .ok();
         match action {
             CloseAction::ReturnToTray => {
                 crate::log_msg("[close] hide_to_tray");
-                win32::ipc::send_to_tray_logged(IpcMessage::UnregisterGui, "unregister GUI");
-                if let Err(error) = win32::process::ensure_tray_host_running() {
-                    crate::log_msg(&format!("[close] tray host unavailable: {error:#}"));
-                }
             }
             CloseAction::ExitApp => {
                 crate::log_msg("[close] quit_app");
-                win32::ipc::send_to_tray_logged(IpcMessage::UnregisterGui, "unregister GUI");
             }
         }
         cx.defer(|cx| {
@@ -309,26 +298,6 @@ impl MemoryCleanerApp {
                 Ok(())
             });
         }
-    }
-
-    pub fn hide_to_tray(&mut self, cx: &mut Context<Self>) {
-        if self
-            .is_closing
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return;
-        }
-        self.stop_memory_refresh();
-        self.hide_main_window();
-        crate::log_msg("[close] hide_to_tray source=tray_menu");
-        if let Err(error) = win32::process::ensure_tray_host_running() {
-            crate::log_msg(&format!("[close] tray host unavailable: {error:#}"));
-        }
-        cx.defer(|cx| {
-            crate::log_msg("[close] schedule_app_quit");
-            cx.quit();
-        });
     }
 
     pub fn apply_locale(&mut self, cx: &mut Context<Self>) {
@@ -534,7 +503,7 @@ impl MemoryCleanerApp {
 
     pub fn set_debug_logging(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.settings.debug_logging = enabled;
-        crate::log::set_debug_enabled(enabled);
+        crate::log::sync_debug_settings(&self.settings);
         if enabled {
             crate::log::write(&t!(
                 "log.debug_enabled",
@@ -556,13 +525,7 @@ impl MemoryCleanerApp {
 
         let areas = self.settings.memory_areas();
         let excluded = self.settings.excluded_processes.clone();
-        if let Ok(steps) = optimize::step_plan(areas, &excluded) {
-            if steps.is_empty() {
-                self.optimize_status = t!("tooltip.select_areas").to_string();
-                cx.notify();
-                return;
-            }
-        } else {
+        if !matches!(optimize::step_plan(areas, &excluded), Ok(steps) if !steps.is_empty()) {
             self.optimize_status = t!("tooltip.select_areas").to_string();
             cx.notify();
             return;
@@ -581,10 +544,10 @@ impl MemoryCleanerApp {
 
         cx.spawn(async move |this, cx| {
             if notify {
-                show_toast(
-                    t!("notification.optimize_start_title").to_string(),
-                    t!("notification.optimize_start_body").to_string(),
-                )
+                smol::unblock({
+                    let settings = settings.clone();
+                    move || optimize_runner::notify_optimize_start(&settings)
+                })
                 .await;
             }
 
@@ -620,7 +583,7 @@ impl MemoryCleanerApp {
 
             let result = worker.join().expect("optimize worker panicked");
 
-            let notification = this
+            this
                 .update(cx, |app, cx| {
                     let _ = app.refresh_memory();
                     app.optimize_step.clear();
@@ -631,23 +594,14 @@ impl MemoryCleanerApp {
                     app.optimize_status = result.status_message.clone();
                     crate::log::write(&format!("[optimize] result: {}", app.optimize_status));
                     cx.notify();
-                    if app.settings.show_optimization_notifications
-                        && !result.status_message.is_empty()
-                        && result.status_message != t!("tooltip.select_areas")
-                    {
-                        Some((
-                            t!("notification.optimize_title").to_string(),
-                            result.status_message.clone(),
-                        ))
-                    } else {
-                        None
-                    }
                 })
-                .ok()
-                .flatten();
+                .ok();
 
-            if let Some((title, body)) = notification {
-                show_toast(title, body).await;
+            if notify {
+                let settings = settings.clone();
+                let result = result.clone();
+                smol::unblock(move || optimize_runner::notify_optimize_complete(&settings, &result))
+                    .await;
             }
 
             Timer::after(OPTIMIZE_RESULT_DISPLAY).await;

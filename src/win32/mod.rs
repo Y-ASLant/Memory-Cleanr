@@ -10,4 +10,5 @@ pub mod process;
 pub mod single_instance;
 pub mod startup;
 pub mod volume;
+pub mod wide;
 pub mod window;

@@ -3,6 +3,8 @@
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject};
 
+use crate::win32::wide::wide_null;
+
 const OPTIMIZE_MUTEX_NAME: &str = "MemoryCleanr_Optimize_{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}";
 
 pub struct OptimizeLock {
@@ -13,10 +15,7 @@ impl OptimizeLock {
     /// Returns `None` when another process is already running cleanup.
     pub fn try_acquire() -> Option<Self> {
         unsafe {
-            let name = OPTIMIZE_MUTEX_NAME
-                .encode_utf16()
-                .chain(std::iter::once(0))
-                .collect::<Vec<_>>();
+            let name = wide_null(OPTIMIZE_MUTEX_NAME);
             let handle = CreateMutexW(
                 None,
                 false,

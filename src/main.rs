@@ -119,9 +119,13 @@ fn main() {
     run_gui_session(&mut settings);
 }
 
-fn run_tray_session(settings: &mut Settings) {
+fn reload_settings(settings: &mut Settings) {
     *settings = Settings::load();
     locale::apply(settings);
+}
+
+fn run_tray_session(settings: &mut Settings) {
+    reload_settings(settings);
 
     let (command_tx, command_rx) = std::sync::mpsc::channel();
     let tray_rx = std::sync::Arc::new(std::sync::Mutex::new(command_rx));
@@ -136,8 +140,7 @@ fn run_tray_session(settings: &mut Settings) {
 }
 
 fn run_gui_session(settings: &mut Settings) {
-    *settings = Settings::load();
-    locale::apply(settings);
+    reload_settings(settings);
 
     if let Err(error) = runtime::run_gui(settings.clone()) {
         log_msg(&format!("[gui] failed: {error:#}"));
