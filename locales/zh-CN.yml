@@ -57,6 +57,21 @@ tray.clipboard:
 clipboard.title:
   zh-CN: "剪贴板历史"
   en: "Clipboard History"
+clipboard.delete_confirm_title:
+  zh-CN: "删除这条记录？"
+  en: "Delete this item?"
+clipboard.delete_confirm_desc:
+  zh-CN: "将从剪贴板历史中移除该条目，此操作无法撤销。"
+  en: "Remove this entry from clipboard history. This cannot be undone."
+clipboard.clear_confirm_title:
+  zh-CN: "清空剪贴板历史？"
+  en: "Clear clipboard history?"
+clipboard.clear_confirm_desc:
+  zh-CN: "将删除 %{count} 条未置顶记录，置顶项会保留。此操作无法撤销。"
+  en: "Delete %{count} unpinned entries. Pinned items are kept. This cannot be undone."
+clipboard.delete_tooltip:
+  zh-CN: "删除"
+  en: "Delete"
 
 tray.tooltip:
   zh-CN: "物理内存: %{percent}"

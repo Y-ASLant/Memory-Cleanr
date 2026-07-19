@@ -3,9 +3,11 @@ use std::time::Duration;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Icon, IconName, InteractiveElementExt, Sizable, Size, h_flex, label::Label,
-    v_flex,
+    ActiveTheme, Icon, IconName, InteractiveElementExt, Sizable, Size,
+    button::{Button, ButtonVariants},
+    h_flex, label::Label, v_flex,
 };
+use rust_i18n::t;
 
 use crate::app::{AppEntityHolder, MemoryCleanerApp};
 use crate::clipboard::{ClipboardItem, ContentType};
@@ -49,6 +51,7 @@ impl Render for DragPreviewCard {
             .border_1()
             .border_color(theme.primary)
             .rounded_md()
+            .cursor_grabbing()
             .child(
                 div()
                     .w(px(20.))
@@ -70,20 +73,15 @@ impl Render for DragPreviewCard {
                         cx,
                     )),
             )
-            .with_animation(
-                "clipboard-drag-ghost",
-                Animation::new(Duration::from_millis(140)).with_easing(ease_out_quint()),
-                |this, delta| {
-                    let shadow = vec![BoxShadow {
-                        color: hsla(0., 0., 0., 0.14 * delta),
-                        offset: point(px(0.), px(2. + 6. * delta)),
-                        blur_radius: px(6. + 12. * delta),
-                        spread_radius: px(0.),
-                        inset: false,
-                    }];
-                    this.opacity(0.55 + 0.4 * delta).shadow(shadow)
-                },
-            )
+            .shadow(vec![BoxShadow {
+                color: hsla(0., 0., 0., 0.16),
+                offset: point(px(0.), px(6.)),
+                blur_radius: px(16.),
+                spread_radius: px(0.),
+                inset: false,
+            }])
+            // Keep scale=1 (ElegantClipboard dropAnimation forces no scale bounce).
+            .opacity(0.96)
     }
 }
 
@@ -97,25 +95,9 @@ pub fn render_clipboard_item(
 ) -> impl IntoElement {
     let theme = cx.theme();
     let is_dragging = app.clipboard_dragging_id == Some(item.id);
-
-    // Soft insertion hole (follows via arrayMove). Fade in so the gap doesn't pop in.
-    if is_dragging {
-        let theme = cx.theme();
-        return div()
-            .id(("clipboard-item-slot", item.id as u32))
-            .w_full()
-            .h(px(ITEM_HEIGHT))
-            .rounded_md()
-            .border_1()
-            .border_color(theme.primary.opacity(0.35))
-            .bg(theme.primary.opacity(0.07))
-            .with_animation(
-                ("clipboard-drop-slot", item.id as u32),
-                Animation::new(Duration::from_millis(120)).with_easing(ease_out_quint()),
-                |this, delta| this.opacity(0.35 + 0.65 * delta),
-            )
-            .into_any_element();
-    }
+    let is_deleting = app.clipboard_deleting_id == Some(item.id);
+    let is_hovered = app.clipboard_hovered_id == Some(item.id);
+    let show_actions = is_hovered && !is_deleting && app.clipboard_dragging_id.is_none();
 
     let bg = if is_selected {
         theme.selection
@@ -131,6 +113,7 @@ pub fn render_clipboard_item(
     let hover_bg = theme.list_hover;
     let active_bg = theme.list_active;
     let hover_border = theme.primary.opacity(0.55);
+    let danger = theme.danger;
 
     let time_text = format_time_ago(&item.created_at);
     let item_id = item.id;
@@ -149,7 +132,7 @@ pub fn render_clipboard_item(
     let drag_payload = DragClipboardItem { id: item_id };
     let app_entity = cx.global::<AppEntityHolder>().0.clone();
 
-    h_flex()
+    let card = h_flex()
         .id(("clipboard-item", item_id as u32))
         .w_full()
         .h(px(ITEM_HEIGHT))
@@ -163,17 +146,36 @@ pub fn render_clipboard_item(
         .border_color(border_color)
         .rounded_md()
         .cursor_pointer()
-        .when(!is_selected, |el| {
+        .on_hover(cx.listener(move |app, hovered: &bool, _, cx| {
+            if *hovered {
+                if app.clipboard_hovered_id != Some(item_id) {
+                    app.clipboard_hovered_id = Some(item_id);
+                    cx.notify();
+                }
+            } else if app.clipboard_hovered_id == Some(item_id) {
+                app.clipboard_hovered_id = None;
+                cx.notify();
+            }
+        }))
+        .when(!is_selected && !is_deleting, |el| {
             el.hover(move |style| style.bg(hover_bg).border_color(hover_border))
                 .active(move |style| style.bg(active_bg).border_color(hover_border))
         })
-        .when(is_selected, |el| el.active(move |style| style.bg(active_bg)))
+        .when(is_selected && !is_deleting, |el| {
+            el.active(move |style| style.bg(active_bg))
+        })
         .on_click(cx.listener(move |app, _, _, cx| {
+            if app.clipboard_deleting_id.is_some() {
+                return;
+            }
             app.clipboard_selected = Some(index);
             app.paste_clipboard_item(item_id, cx);
         }))
-        .on_double_click(cx.listener(move |app, _, _, cx| {
-            app.delete_clipboard_item(item_id, cx);
+        .on_double_click(cx.listener(move |app, _, window, cx| {
+            if app.clipboard_deleting_id.is_some() {
+                return;
+            }
+            app.open_clipboard_delete_confirm(item_id, window, cx);
         }))
         .child(
             div()
@@ -196,6 +198,7 @@ pub fn render_clipboard_item(
                             app.clipboard_dragging_id = Some(item.id);
                             // Start with over = self so the hole begins under the card.
                             app.clipboard_drop_target_id = Some(item.id);
+                            app.clipboard_hovered_id = None;
                             cx.notify();
                         });
                         let preview = preview.clone();
@@ -221,7 +224,44 @@ pub fn render_clipboard_item(
                     cx,
                 )),
         )
+        .when(show_actions, |el| {
+            el.child(
+                div()
+                    .id(("clipboard-delete-wrap", item_id as u32))
+                    .flex_shrink_0()
+                    .pt_1()
+                    .on_click(|_, _, cx| cx.stop_propagation())
+                    .child(
+                        Button::new(("clipboard-delete", item_id as u32))
+                            .ghost()
+                            .xsmall()
+                            .icon(
+                                Icon::new(IconName::CircleX)
+                                    .xsmall()
+                                    .text_color(danger),
+                            )
+                            .tooltip(t!("clipboard.delete_tooltip").to_string())
+                            .on_click(cx.listener(move |app, _, window, cx| {
+                                cx.stop_propagation();
+                                app.open_clipboard_delete_confirm(item_id, window, cx);
+                            })),
+                    ),
+            )
+        });
+
+    if is_deleting {
+        card.with_animation(
+            ("clipboard-delete", item_id as u32),
+            Animation::new(Duration::from_millis(160)).with_easing(ease_out_quint()),
+            |this, delta| this.opacity(1.0 - delta),
+        )
         .into_any_element()
+    } else if is_dragging {
+        // ElegantClipboard / dnd-kit: keep layout slot, hide the source (ghost is DragOverlay).
+        card.opacity(0.).into_any_element()
+    } else {
+        card.into_any_element()
+    }
 }
 
 fn drag_handle_icon(muted: Hsla) -> impl IntoElement {
@@ -270,14 +310,11 @@ fn card_content(
                         .into_any_element()
                 }))
                 .child(
-                    h_flex()
-                        .gap_2()
-                        .items_center()
-                        .child(
-                            Label::new(time_text.to_string())
-                                .text_xs()
-                                .text_color(theme.muted_foreground),
-                        ),
+                    h_flex().gap_2().items_center().child(
+                        Label::new(time_text.to_string())
+                            .text_xs()
+                            .text_color(theme.muted_foreground),
+                    ),
                 ),
         )
         .when(is_pinned, |el| {

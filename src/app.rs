@@ -168,6 +168,10 @@ pub struct MemoryCleanerApp {
     pub clipboard_drop_target_id: Option<i64>,
     /// Item currently being dragged (dims the source card).
     pub clipboard_dragging_id: Option<i64>,
+    /// Card under the pointer (reveals row actions).
+    pub clipboard_hovered_id: Option<i64>,
+    /// Item playing delete exit animation before removal.
+    pub clipboard_deleting_id: Option<i64>,
     /// Scroll handle for the clipboard virtual list.
     pub clipboard_list_scroll: UniformListScrollHandle,
 }
@@ -240,6 +244,8 @@ impl MemoryCleanerApp {
             clipboard_selected: None,
             clipboard_drop_target_id: None,
             clipboard_dragging_id: None,
+            clipboard_hovered_id: None,
+            clipboard_deleting_id: None,
             clipboard_list_scroll: UniformListScrollHandle::new(),
         };
 
@@ -1145,6 +1151,43 @@ impl MemoryCleanerApp {
         cx.notify();
     }
 
+    pub fn open_clipboard_clear_confirm(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::dialog::DialogButtonProps;
+
+        let count = self
+            .clipboard_items
+            .iter()
+            .filter(|item| !item.is_pinned)
+            .count();
+        if count == 0 {
+            return;
+        }
+        let weak = cx.weak_entity();
+        window.open_alert_dialog(cx, move |alert, _window, _cx| {
+            alert
+                .title(t!("clipboard.clear_confirm_title"))
+                .description(t!("clipboard.clear_confirm_desc", count = count))
+                .overlay_closable(false)
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_text(t!("dialog.confirm"))
+                        .cancel_text(t!("dialog.cancel"))
+                        .show_cancel(true),
+                )
+                .on_ok({
+                    let weak = weak.clone();
+                    move |_, _window, cx| {
+                        let _ = weak.update(cx, |app, cx| app.clear_clipboard_history(cx));
+                        true
+                    }
+                })
+        });
+    }
+
     pub fn clear_clipboard_history(&mut self, cx: &mut Context<Self>) {
         if let Some(storage) = &self.clipboard_storage {
             match storage.clear_unpinned() {
@@ -1152,7 +1195,60 @@ impl MemoryCleanerApp {
                 Err(e) => crate::log_msg(&format!("[clipboard] clear failed: {e:#}")),
             }
         }
+        self.clipboard_hovered_id = None;
+        self.clipboard_selected = None;
         cx.notify();
+    }
+
+    pub fn open_clipboard_delete_confirm(
+        &mut self,
+        id: i64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::dialog::DialogButtonProps;
+
+        let weak = cx.weak_entity();
+        window.open_alert_dialog(cx, move |alert, _window, _cx| {
+            alert
+                .title(t!("clipboard.delete_confirm_title"))
+                .description(t!("clipboard.delete_confirm_desc"))
+                .overlay_closable(false)
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_text(t!("dialog.confirm"))
+                        .cancel_text(t!("dialog.cancel"))
+                        .show_cancel(true),
+                )
+                .on_ok({
+                    let weak = weak.clone();
+                    move |_, _window, cx| {
+                        let _ = weak.update(cx, |app, cx| {
+                            app.begin_clipboard_item_delete(id, cx);
+                        });
+                        true
+                    }
+                })
+        });
+    }
+
+    /// Fade the card out, then remove it from storage.
+    pub fn begin_clipboard_item_delete(&mut self, id: i64, cx: &mut Context<Self>) {
+        if self.clipboard_deleting_id.is_some() {
+            return;
+        }
+        self.clipboard_deleting_id = Some(id);
+        self.clipboard_hovered_id = None;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            Timer::after(Duration::from_millis(160)).await;
+            let _ = this.update(cx, |app, cx| {
+                app.clipboard_deleting_id = None;
+                app.delete_clipboard_item(id, cx);
+            });
+        })
+        .detach();
     }
 
     pub fn paste_clipboard_item(&mut self, id: i64, cx: &mut Context<Self>) {
@@ -1228,6 +1324,9 @@ impl MemoryCleanerApp {
                 Ok(()) => self.refresh_clipboard_items(),
                 Err(e) => crate::log_msg(&format!("[clipboard] delete failed: {e:#}")),
             }
+        }
+        if self.clipboard_hovered_id == Some(id) {
+            self.clipboard_hovered_id = None;
         }
         cx.notify();
     }
@@ -1334,6 +1433,11 @@ fn memory_group_box(
 
 impl Render for MemoryCleanerApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Drop / Esc / release-outside clears GPUI drag; sync our reorder preview state.
+        if self.clipboard_dragging_id.is_some() && !cx.has_active_drag() {
+            self.clipboard_dragging_id = None;
+            self.clipboard_drop_target_id = None;
+        }
         use crate::ui::memory_card::render_memory_card;
         use crate::ui::settings_page::{render_cleanup_footer, render_settings_content};
         use crate::ui::title_bar::render_title_bar;

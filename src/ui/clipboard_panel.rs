@@ -2,10 +2,12 @@ use std::ops::Range;
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::{ActiveTheme, button::Button, h_flex, label::Label, v_flex};
+use gpui_component::{
+    ActiveTheme, Disableable, button::Button, h_flex, label::Label, v_flex,
+};
 
 use crate::app::MemoryCleanerApp;
-use crate::clipboard::{ClipboardItem, ContentType};
+use crate::clipboard::ContentType;
 use crate::ui::clipboard_item_card::{
     DragClipboardItem, ITEM_HEIGHT, render_clipboard_item,
 };
@@ -16,7 +18,7 @@ pub const CLIPBOARD_WINDOW_HEIGHT: f32 = 600.;
 const FILTER_BAR_H: f32 = 34.;
 /// Status bar height.
 const STATUS_BAR_H: f32 = 28.;
-/// Vertical gap between cards (`mb_1`).
+/// Vertical gap between cards.
 pub const ITEM_GAP: f32 = 4.;
 /// Row height including gap (uniform_list measures one row).
 pub const ROW_HEIGHT: f32 = ITEM_HEIGHT + ITEM_GAP;
@@ -33,13 +35,7 @@ pub fn render_clipboard_panel(
     let active_filter = app.clipboard_filter;
     let entity = cx.entity().clone();
     let scroll = app.clipboard_list_scroll.clone();
-
-    // Display count uses the same preview order as drag (arrayMove while dragging).
-    let display_count = preview_ordered_count(
-        &app.clipboard_items,
-        app.clipboard_dragging_id,
-        app.clipboard_drop_target_id,
-    );
+    let is_dragging = app.clipboard_dragging_id.is_some();
 
     v_flex()
         .flex_1()
@@ -77,14 +73,20 @@ pub fn render_clipboard_panel(
                     |app, cx| app.set_clipboard_filter(Some(ContentType::File), cx),
                 ))
                 .child(div().flex_1())
-                .child(
+                .child({
+                    let unpinned = app
+                        .clipboard_items
+                        .iter()
+                        .filter(|item| !item.is_pinned)
+                        .count();
                     Button::new("clipboard-clear")
                         .label("清空")
                         .text_xs()
-                        .on_click(cx.listener(|app, _, _, cx| {
-                            app.clear_clipboard_history(cx);
-                        })),
-                ),
+                        .disabled(unpinned == 0)
+                        .on_click(cx.listener(|app, _, window, cx| {
+                            app.open_clipboard_clear_confirm(window, cx);
+                        }))
+                }),
         )
         .child({
             if total == 0 {
@@ -107,6 +109,7 @@ pub fn render_clipboard_panel(
                     .w_full()
                     .px_2()
                     .py_1()
+                    .when(is_dragging, |el| el.cursor_grabbing())
                     .on_drag_move(cx.listener(|app, e: &DragMoveEvent<DragClipboardItem>, _, cx| {
                         update_drop_target_from_pointer(app, e, cx);
                     }))
@@ -123,7 +126,9 @@ pub fn render_clipboard_panel(
                         }
                     }))
                     .child(
-                        uniform_list("clipboard-virtual-list", display_count, {
+                        // Keep original order while dragging (dnd-kit model). Only commit
+                        // arrayMove on drop — never preview-reorder the list.
+                        uniform_list("clipboard-virtual-list", total, {
                             let entity = entity.clone();
                             move |range: Range<usize>, _window, cx| {
                                 entity.update(cx, |app, cx| render_visible_rows(app, range, cx))
@@ -153,7 +158,7 @@ pub fn render_clipboard_panel(
                         .text_color(muted),
                 )
                 .child(
-                    Label::new("点击粘贴 · 双击删除 · 拖拽左侧调整顺序".to_string())
+                    Label::new("点击粘贴 · 删除需确认 · 拖拽左侧调整顺序".to_string())
                         .text_xs()
                         .text_color(muted),
                 ),
@@ -165,34 +170,50 @@ fn render_visible_rows(
     range: Range<usize>,
     cx: &mut Context<MemoryCleanerApp>,
 ) -> Vec<AnyElement> {
-    let display_ids: Vec<(usize, i64)> = {
-        let display = preview_ordered_items(
-            &app.clipboard_items,
-            app.clipboard_dragging_id,
-            app.clipboard_drop_target_id,
-        );
-        range
-            .filter_map(|idx| display.get(idx).map(|item| (idx, item.id)))
-            .collect()
-    };
-    let is_dragging = app.clipboard_dragging_id.is_some();
+    let dragging_id = app.clipboard_dragging_id;
+    let drop_target_id = app.clipboard_drop_target_id;
+    let active_idx = dragging_id.and_then(|id| {
+        app.clipboard_items
+            .iter()
+            .position(|item| item.id == id)
+    });
+    let over_idx = drop_target_id.and_then(|id| {
+        app.clipboard_items
+            .iter()
+            .position(|item| item.id == id)
+    });
 
-    display_ids
-        .into_iter()
-        .filter_map(|(idx, id)| {
-            let item = app.clipboard_items.iter().find(|item| item.id == id)?;
+    range
+        .filter_map(|idx| {
+            let item = app.clipboard_items.get(idx)?;
+            let id = item.id;
             let selected = app.clipboard_selected == Some(idx);
-            let dimmed = is_dragging && app.clipboard_dragging_id != Some(item.id);
+            let is_source = dragging_id == Some(id);
+            // dnd-kit verticalListSortingStrategy: translateY only — never reorder rows.
+            // Set the target offset directly (no with_animation keyed on over): GPUI
+            // oneshot animations restart on each notify and cause the bounce.
+            let target_y = match (active_idx, over_idx) {
+                (Some(active), Some(over)) if !is_source => {
+                    sortable_shift_y(idx, active, over)
+                }
+                _ => 0.,
+            };
+
+            let card = render_clipboard_item(item, idx, selected, app, cx);
+
             Some(
+                // No overflow clip: siblings must paint into neighbors while translating.
                 div()
                     .w_full()
                     .h(px(ROW_HEIGHT))
-                    .when(dimmed, |el| el.opacity(0.88))
+                    .relative()
                     .child(
                         div()
+                            .absolute()
                             .w_full()
                             .h(px(ITEM_HEIGHT))
-                            .child(render_clipboard_item(item, idx, selected, app, cx)),
+                            .top(px(target_y))
+                            .child(card),
                     )
                     .into_any_element(),
             )
@@ -200,39 +221,25 @@ fn render_visible_rows(
         .collect()
 }
 
-fn preview_ordered_count(
-    items: &[ClipboardItem],
-    dragging_id: Option<i64>,
-    drop_target_id: Option<i64>,
-) -> usize {
-    preview_ordered_items(items, dragging_id, drop_target_id).len()
-}
-
-/// Like `@dnd-kit` `arrayMove`: move dragged item to the `over` item's index.
-fn preview_ordered_items(
-    items: &[ClipboardItem],
-    dragging_id: Option<i64>,
-    drop_target_id: Option<i64>,
-) -> Vec<&ClipboardItem> {
-    let mut ordered: Vec<&ClipboardItem> = items.iter().collect();
-    let (Some(drag_id), Some(drop_id)) = (dragging_id, drop_target_id) else {
-        return ordered;
-    };
-    if drag_id == drop_id {
-        return ordered;
+/// Same geometry as `@dnd-kit` `verticalListSortingStrategy` for equal-height rows.
+fn sortable_shift_y(index: usize, active: usize, over: usize) -> f32 {
+    if active == over {
+        return 0.;
     }
-    let Some(from) = ordered.iter().position(|item| item.id == drag_id) else {
-        return ordered;
-    };
-    let Some(to) = ordered.iter().position(|item| item.id == drop_id) else {
-        return ordered;
-    };
-    let item = ordered.remove(from);
-    ordered.insert(to, item);
-    ordered
+    if active < over {
+        // Moving down: items (active, over] shift up to open a hole at `over`.
+        if index > active && index <= over {
+            return -ROW_HEIGHT;
+        }
+    } else if index >= over && index < active {
+        // Moving up: items [over, active) shift down.
+        return ROW_HEIGHT;
+    }
+    0.
 }
 
-/// Resolve drop target from pointer Y against the **original** list geometry + scroll.
+/// Resolve `over` from pointer Y — closest row center (dnd-kit `closestCenter` for
+/// uniform rows) with light hysteresis so the boundary doesn't chatter.
 fn update_drop_target_from_pointer(
     app: &mut MemoryCleanerApp,
     e: &DragMoveEvent<DragClipboardItem>,
@@ -255,20 +262,23 @@ fn update_drop_target_from_pointer(
     );
     // offset.y is ≤ 0 when scrolled down; convert viewport Y → content Y.
     let y = f32::from(e.event.position.y - e.bounds.origin.y) - scroll_y;
+
+    // Closest row center: centers sit at i*row + ITEM_HEIGHT/2.
     let mut best_idx = if y <= 0. {
         0
     } else {
-        ((y / row) as usize).min(n - 1)
+        let approx = ((y - ITEM_HEIGHT * 0.5) / row).round() as isize;
+        approx.clamp(0, (n as isize) - 1) as usize
     };
 
     if let Some(current_id) = app.clipboard_drop_target_id
         && let Some(current_idx) = items.iter().position(|item| item.id == current_id)
         && current_idx != best_idx
     {
-        let current_top = current_idx as f32 * row;
-        let current_bottom = current_top + ITEM_HEIGHT;
-        let margin = ITEM_HEIGHT * 0.25;
-        if y >= current_top - margin && y <= current_bottom + margin {
+        let current_center = current_idx as f32 * row + ITEM_HEIGHT * 0.5;
+        // Stick to current over until pointer crosses ~35% toward the neighbor center.
+        let stick = row * 0.35;
+        if (y - current_center).abs() < stick {
             best_idx = current_idx;
         }
     }
