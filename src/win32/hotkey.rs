@@ -21,6 +21,7 @@ use crate::settings::Settings;
 use crate::tray::TrayCommand;
 
 const HOTKEY_ID_OPTIMIZE: i32 = 1;
+const HOTKEY_ID_WIN_V: i32 = 2;
 const WM_APP_SHUTDOWN: u32 = windows::Win32::UI::WindowsAndMessaging::WM_USER + 1;
 
 static COMMAND_TX: OnceLock<Sender<TrayCommand>> = OnceLock::new();
@@ -210,9 +211,9 @@ impl Drop for HotkeyWorker {
         }
     }
 }
-
 struct HotkeyService {
     worker: Option<HotkeyWorker>,
+    clipboard_worker: Option<HotkeyWorker>,
 }
 
 impl HotkeyService {
@@ -281,16 +282,115 @@ fn spawn_hotkey_worker(binding: HotkeyBinding) -> Result<HotkeyWorker> {
     })
 }
 
+fn spawn_clipboard_hotkey_worker(binding: HotkeyBinding) -> Result<HotkeyWorker> {
+    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<Result<u32>>(1);
+
+    let join_handle = std::thread::Builder::new()
+        .name("clipboard-hotkey".into())
+        .spawn(move || {
+            let thread_id = unsafe { GetCurrentThreadId() };
+            let setup = run_clipboard_hotkey_setup(binding);
+            let _ = ready_tx.send(
+                setup
+                    .as_ref()
+                    .map(|_| thread_id)
+                    .map_err(|e| anyhow::anyhow!("{e:#}")),
+            );
+
+            let Ok(hwnd) = setup else {
+                return;
+            };
+
+            unsafe {
+                message_loop(hwnd);
+                let _ = UnregisterHotKey(Some(hwnd), HOTKEY_ID_WIN_V);
+                let _ = DestroyWindow(hwnd);
+            }
+        })
+        .context("failed to spawn clipboard hotkey thread")?;
+
+    let thread_id = ready_rx
+        .recv()
+        .context("clipboard hotkey exited before registration completed")??;
+
+    Ok(HotkeyWorker {
+        thread_id,
+        join_handle: Some(join_handle),
+    })
+}
+
+fn run_clipboard_hotkey_setup(binding: HotkeyBinding) -> Result<HWND> {
+    unsafe {
+        register_hotkey_window_class()?;
+
+        let hwnd = create_message_window()?;
+        RegisterHotKey(
+            Some(hwnd),
+            HOTKEY_ID_WIN_V,
+            binding.modifiers,
+            binding.virtual_key.0 as u32,
+        )
+        .context("RegisterHotKey(Win+V) failed")?;
+
+        Ok(hwnd)
+    }
+}
+
 pub fn bind_command_sender(tx: Sender<TrayCommand>) {
     let _ = COMMAND_TX.set(tx);
 }
-
 pub fn sync(settings: &Settings) {
     SERVICE
-        .get_or_init(|| Mutex::new(HotkeyService { worker: None }))
+        .get_or_init(|| {
+            Mutex::new(HotkeyService {
+                worker: None,
+                clipboard_worker: None,
+            })
+        })
         .lock()
         .expect("hotkey service mutex poisoned")
         .apply(settings);
+}
+
+/// Register or unregister Win+V for clipboard history.
+/// Call after `disable_win_v()` / `enable_win_v()` registry changes.
+pub fn sync_clipboard(enabled: bool) {
+    let mut svc = SERVICE
+        .get_or_init(|| {
+            Mutex::new(HotkeyService {
+                worker: None,
+                clipboard_worker: None,
+            })
+        })
+        .lock()
+        .expect("hotkey service mutex poisoned");
+
+    // Drop existing clipboard worker (unregisters hotkey)
+    svc.clipboard_worker = None;
+
+    if !enabled {
+        crate::log_msg("[hotkey] clipboard Win+V disabled");
+        return;
+    }
+
+    if COMMAND_TX.get().is_none() {
+        crate::log_msg("[hotkey] command channel unavailable for clipboard");
+        return;
+    }
+
+    // Win+V: MOD_WIN = 0x0008, VK_V = 0x56
+    let binding = HotkeyBinding {
+        modifiers: windows::Win32::UI::Input::KeyboardAndMouse::MOD_WIN,
+        virtual_key: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(0x56),
+    };
+
+    match spawn_clipboard_hotkey_worker(binding) {
+        Ok(worker) => {
+            crate::log_msg("[hotkey] registered Win+V for clipboard");
+            svc.clipboard_worker = Some(worker);
+        }
+        Err(e) => crate::log_msg(&format!("[hotkey] Win+V register failed: {e:#}")),
+    }
 }
 
 fn run_hotkey_setup(binding: HotkeyBinding) -> Result<HWND> {
@@ -368,6 +468,12 @@ unsafe extern "system" fn hotkey_wnd_proc(
         WM_HOTKEY if wparam.0 == HOTKEY_ID_OPTIMIZE as usize => {
             if let Some(tx) = COMMAND_TX.get() {
                 let _ = tx.send(TrayCommand::Optimize);
+            }
+            LRESULT(0)
+        }
+        WM_HOTKEY if wparam.0 == HOTKEY_ID_WIN_V as usize => {
+            if let Some(tx) = COMMAND_TX.get() {
+                let _ = tx.send(TrayCommand::ShowClipboard);
             }
             LRESULT(0)
         }

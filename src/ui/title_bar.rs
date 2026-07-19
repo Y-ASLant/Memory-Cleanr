@@ -179,6 +179,7 @@ fn window_settings_control(
 }
 
 fn title_bar_drag_area(
+    app: &MemoryCleanerApp,
     window: &mut Window,
     state: &Entity<TitleBarDragState>,
     foreground: Hsla,
@@ -212,9 +213,17 @@ fn title_bar_drag_area(
                 window.start_window_move();
             }
         }))
-        .child(Icon::new(IconName::MemoryStick).small())
+        .child(Icon::new(if app.clipboard_visible {
+            IconName::Copy
+        } else {
+            IconName::MemoryStick
+        }).small())
         .child(
-            Label::new(APP_NAME)
+            Label::new(if app.clipboard_visible {
+                t!("clipboard.title").to_string()
+            } else {
+                APP_NAME.to_string()
+            })
                 .text_sm()
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(foreground),
@@ -266,22 +275,30 @@ pub fn render_title_bar(
             .border_color(title_bar_border)
             .bg(title_bar_bg)
             .child(title_bar_drag_area(
+                app,
                 window,
                 &state,
                 action_colors.foreground,
             ))
             .child({
-                let mut actions = h_flex()
-                    .items_center()
-                    .flex_shrink_0()
-                    .h_full()
-                    .child(icon_cache_control(app, action_colors, cx));
-                if app.settings_expanded {
-                    actions = actions.child(window_settings_control(action_colors, cx));
+                let mut actions = h_flex().items_center().flex_shrink_0().h_full();
+                if app.clipboard_visible {
+                    actions = actions.child(title_bar_action_control(
+                        "titlebar-back-to-memory",
+                        IconName::ArrowLeft,
+                        action_colors,
+                        false,
+                        cx,
+                        |app, _, cx| app.show_clipboard_window(cx),
+                    ));
+                } else {
+                    actions = actions.child(icon_cache_control(app, action_colors, cx));
+                    if app.settings_expanded {
+                        actions = actions.child(window_settings_control(action_colors, cx));
+                    }
+                    actions = actions.child(expand_toggle_control(app, action_colors, cx));
                 }
-                actions
-                    .child(expand_toggle_control(app, action_colors, cx))
-                    .child(window_controls(cx))
+                actions.child(window_controls(cx))
             }),
     )
 }

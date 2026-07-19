@@ -22,10 +22,12 @@ static CMD_TX: OnceLock<Sender<TrayCommand>> = OnceLock::new();
 static SPIN_GENERATION: AtomicU32 = AtomicU32::new(0);
 static SPIN_ACTIVE: AtomicBool = AtomicBool::new(false);
 
+#[allow(dead_code)]
 pub struct Tray {
     icon: TrayIcon,
     optimize: MenuItem,
     toggle_window: MenuItem,
+    clipboard: MenuItem,
     quit: MenuItem,
 }
 
@@ -38,6 +40,8 @@ pub enum TrayCommand {
     MenuAction(String),
     /// Tray icon spin animation frame (0 = upright). Handled on the GPUI thread only.
     SetSpinFrame(u32),
+    /// Win+V hotkey: show clipboard history panel.
+    ShowClipboard,
 }
 
 impl Tray {
@@ -47,10 +51,12 @@ impl Tray {
 
         let optimize = MenuItem::with_id("optimize", t!("tray.optimize"), true, None);
         let toggle_window = MenuItem::with_id("toggle_window", t!("tray.hide_window"), true, None);
+        let clipboard = MenuItem::with_id("clipboard", t!("tray.clipboard"), true, None);
         let quit = MenuItem::with_id("quit", t!("tray.quit"), true, None);
         let menu = Menu::new();
         menu.append(&optimize)?;
         menu.append(&toggle_window)?;
+        menu.append(&clipboard)?;
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&quit)?;
 
@@ -69,6 +75,7 @@ impl Tray {
             icon: tray_icon,
             optimize,
             toggle_window,
+            clipboard,
             quit,
         });
         let leaked = Box::leak(tray);
@@ -293,6 +300,7 @@ pub fn dispatch_command(
                 set_tray_icon_rotation(quarters);
             }
         }
+        TrayCommand::ShowClipboard => app.show_clipboard_window(cx),
     }
 }
 

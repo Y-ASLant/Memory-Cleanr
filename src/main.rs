@@ -117,6 +117,14 @@ fn main() {
     });
     win32::hotkey::sync(&settings);
 
+    // Clipboard Win+V hotkey: disable system Win+V and register our own
+    if settings.clipboard_enabled && settings.clipboard_win_v_enabled {
+        if let Err(e) = win32::win_v_registry::disable_win_v() {
+            log_msg(&format!("[clipboard] disable Win+V failed: {e:#}"));
+        }
+        win32::hotkey::sync_clipboard(true);
+    }
+
     let app = gpui_platform::application()
         .with_assets(gpui_component_assets::Assets)
         .with_quit_mode(QuitMode::Explicit);
@@ -130,7 +138,15 @@ fn main() {
                 .try_global::<AppEntityHolder>()
                 .map(|holder| holder.0.clone());
             if let Some(entity) = entity {
-                entity.update(cx, |app, _| app.settings.save());
+                entity.update(cx, |app, _| {
+                    app.settings.save();
+                    // Restore system Win+V on exit
+                    if app.settings.clipboard_win_v_enabled
+                        && let Err(e) = win32::win_v_registry::enable_win_v()
+                    {
+                        log_msg(&format!("[clipboard] restore Win+V failed: {e:#}"));
+                    }
+                });
             }
             cx.quit();
         });

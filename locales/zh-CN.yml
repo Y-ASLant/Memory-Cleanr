@@ -50,6 +50,14 @@ tray.optimize:
 tray.quit:
   zh-CN: "退出程序"
   en: "Quit"
+tray.clipboard:
+  zh-CN: "剪贴板历史"
+  en: "Clipboard History"
+
+clipboard.title:
+  zh-CN: "剪贴板历史"
+  en: "Clipboard History"
+
 tray.tooltip:
   zh-CN: "物理内存: %{percent}"
   en: "Physical: %{percent}"

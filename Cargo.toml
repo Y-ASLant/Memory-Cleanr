@@ -25,11 +25,15 @@ tempfile = "3"
 [dependencies]
 anyhow = "1"
 bitflags = "2"
+blake3 = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 gpui = { git = "https://github.com/zed-industries/zed" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit"] }
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "0775df394083c1ed74f36f846b78868d1267398f" }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "0775df394083c1ed74f36f846b78868d1267398f" }
+rusqlite = { version = "0.38", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 smol = "2"
 raw-window-handle = "0.6"
 tray-icon = { version = "0.24", default-features = false }
@@ -55,7 +59,7 @@ windows = { version = "0.62", features = [
     "Win32_System_ProcessStatus",
     "Win32_System_LibraryLoader",
     "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_Shell",
+    "Win32_System_DataExchange",
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Globalization",

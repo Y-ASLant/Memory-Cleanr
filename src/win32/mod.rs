@@ -1,3 +1,4 @@
+pub mod clipboard;
 pub mod hotkey;
 pub mod notification;
 pub mod nt;
@@ -6,4 +7,5 @@ pub mod process;
 pub mod single_instance;
 pub mod startup;
 pub mod volume;
+pub mod win_v_registry;
 pub mod window;

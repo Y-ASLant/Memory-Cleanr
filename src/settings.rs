@@ -31,6 +31,14 @@ pub struct Settings {
     pub cleanup_hotkey: String,
     /// Process base names excluded from Working Set cleanup (lowercase, no `.exe`).
     pub excluded_processes: Vec<String>,
+    /// Enable clipboard history monitoring and tray menu.
+    pub clipboard_enabled: bool,
+    /// Replace system Win+V with clipboard history panel (requires restart Explorer).
+    pub clipboard_win_v_enabled: bool,
+    /// Maximum clipboard history items (0 = unlimited).
+    pub clipboard_max_history: u32,
+    /// Auto-delete non-pinned clipboard items older than N days (0 = never).
+    pub clipboard_auto_cleanup_days: u32,
 }
 
 impl Default for Settings {
@@ -53,6 +61,10 @@ impl Default for Settings {
             cleanup_hotkey_enabled: true,
             cleanup_hotkey: crate::win32::hotkey::HotkeyBinding::DEFAULT_CLEANUP.into(),
             excluded_processes: Vec::new(),
+            clipboard_enabled: true,
+            clipboard_win_v_enabled: false,
+            clipboard_max_history: 10_000,
+            clipboard_auto_cleanup_days: 30,
         }
     }
 }

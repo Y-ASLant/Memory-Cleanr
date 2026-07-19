@@ -34,8 +34,10 @@ const WINDOW_MIN_WIDTH: f32 = 520.;
 pub const CONTENT_PADDING: f32 = 6.;
 const SINGLE_CARD_MAX_WIDTH: f32 = 360.;
 
-pub fn window_size(expanded: bool) -> Size<Pixels> {
-    let height = if expanded {
+pub fn window_size(expanded: bool, clipboard_visible: bool) -> Size<Pixels> {
+    let height = if clipboard_visible {
+        crate::ui::clipboard_panel::CLIPBOARD_WINDOW_HEIGHT
+    } else if expanded {
         crate::ui::layout::expanded_window_height(CONTENT_PADDING)
     } else {
         crate::ui::layout::collapsed_window_height(CONTENT_PADDING)
@@ -50,10 +52,13 @@ pub fn window_min_size() -> Size<Pixels> {
     )
 }
 
-pub fn window_options(expanded: bool, cx: &App) -> WindowOptions {
+pub fn window_options(expanded: bool, clipboard_visible: bool, cx: &App) -> WindowOptions {
     WindowOptions {
         titlebar: Some(TitleBar::title_bar_options()),
-        window_bounds: Some(WindowBounds::centered(window_size(expanded), cx)),
+        window_bounds: Some(WindowBounds::centered(
+            window_size(expanded, clipboard_visible),
+            cx,
+        )),
         is_resizable: false,
         window_min_size: Some(window_min_size()),
         ..Default::default()
@@ -69,7 +74,7 @@ pub fn open_main_window(
     tray_rx: std::sync::mpsc::Receiver<TrayCommand>,
     launch_hidden: bool,
 ) -> Result<()> {
-    let options = cx.update(|app| window_options(false, app));
+    let options = cx.update(|app| window_options(false, false, app));
     cx.open_window(options, |window, cx| {
         window.set_window_title(crate::version::APP_NAME);
 
@@ -147,6 +152,24 @@ pub struct MemoryCleanerApp {
     window_shown: bool,
     pub cleanup_hotkey_recording: bool,
     pub(crate) hotkey_capture_focus: FocusHandle,
+    /// Clipboard history storage (None until clipboard is enabled).
+    pub clipboard_storage: Option<crate::clipboard::storage::ClipboardStorage>,
+    /// Clipboard monitor shutdown handle.
+    pub clipboard_monitor: Option<crate::clipboard::monitor::MonitorHandle>,
+    /// Clipboard panel visible state.
+    pub clipboard_visible: bool,
+    /// Cached clipboard items for the panel.
+    pub clipboard_items: Vec<crate::clipboard::ClipboardItem>,
+    /// Current clipboard search query.
+    pub clipboard_search: String,
+    /// Filter clipboard list by content type (`None` = all).
+    pub clipboard_filter: Option<crate::clipboard::ContentType>,
+    /// Selected index in clipboard list (for keyboard nav).
+    pub clipboard_selected: Option<usize>,
+    /// Drop target while dragging to reorder.
+    pub clipboard_drop_target_id: Option<i64>,
+    /// Item currently being dragged (dims the source card).
+    pub clipboard_dragging_id: Option<i64>,
 }
 
 impl MemoryCleanerApp {
@@ -178,6 +201,18 @@ impl MemoryCleanerApp {
             )
         });
 
+        let clipboard_storage = if settings.clipboard_enabled {
+            match crate::clipboard::storage::ClipboardStorage::open() {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    crate::log_msg(&format!("[clipboard] storage open failed: {e:#}"));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let mut app = Self {
             window: None,
             settings,
@@ -197,6 +232,15 @@ impl MemoryCleanerApp {
             window_shown: !launch_hidden,
             cleanup_hotkey_recording: false,
             hotkey_capture_focus: cx.focus_handle(),
+            clipboard_storage,
+            clipboard_monitor: None,
+            clipboard_visible: false,
+            clipboard_items: Vec::new(),
+            clipboard_search: String::new(),
+            clipboard_filter: None,
+            clipboard_selected: None,
+            clipboard_drop_target_id: None,
+            clipboard_dragging_id: None,
         };
 
         cx.set_global(AppEntityHolder(cx.entity()));
@@ -232,6 +276,11 @@ impl MemoryCleanerApp {
 
         if !launch_hidden {
             self.start_memory_refresh(cx);
+        }
+
+        if self.clipboard_visible {
+            self.refresh_clipboard_items();
+            window.resize(window_size(self.settings_expanded, true));
         }
     }
 
@@ -276,13 +325,14 @@ impl MemoryCleanerApp {
 
         self.window_opening = true;
         let expanded = self.settings_expanded;
+        let clipboard_visible = self.clipboard_visible;
         cx.spawn(async move |this, cx| {
             let entity = match this.upgrade() {
                 Some(entity) => entity,
                 None => return,
             };
 
-            let options = cx.update(|app| window_options(expanded, app));
+            let options = cx.update(|app| window_options(expanded, clipboard_visible, app));
             let opened = cx.open_window(options, |window, cx| {
                 entity.update(cx, |app, cx| {
                     app.attach_window(window, cx, false);
@@ -534,7 +584,7 @@ impl MemoryCleanerApp {
 
     pub fn toggle_settings_expanded(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.settings_expanded = !self.settings_expanded;
-        window.resize(window_size(self.settings_expanded));
+        window.resize(window_size(self.settings_expanded, self.clipboard_visible));
         cx.notify();
     }
 
@@ -653,6 +703,7 @@ impl MemoryCleanerApp {
                     self.activate_window(cx);
                 }
             }
+            "clipboard" => self.show_clipboard_window(cx),
             "quit" => {
                 self.settings.save();
                 cx.quit();
@@ -662,7 +713,7 @@ impl MemoryCleanerApp {
     }
 
     pub fn start_background_tasks(
-        &self,
+        &mut self,
         cx: &mut Context<Self>,
         mut tray_rx: std::sync::mpsc::Receiver<TrayCommand>,
     ) {
@@ -691,6 +742,46 @@ impl MemoryCleanerApp {
             }
         })
         .detach();
+
+        // 剪贴板监听
+        if self.settings.clipboard_enabled {
+            match crate::clipboard::monitor::start_monitor() {
+                Ok((clip_rx, handle)) => {
+                    self.clipboard_monitor = Some(handle);
+                    crate::log_msg("[clipboard] monitor started");
+
+                    cx.spawn(async move |this, cx| {
+                        let mut rx = clip_rx;
+                        loop {
+                            let (result, returned_rx) =
+                                smol::unblock(move || {
+                                    let r = rx.recv();
+                                    (r, rx)
+                                })
+                                .await;
+                            rx = returned_rx;
+
+                            let Ok(content) = result else {
+                                break;
+                            };
+
+                            if this
+                                .update(cx, |app, cx| {
+                                    app.handle_clipboard_content(content, cx);
+                                })
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                    })
+                    .detach();
+                }
+                Err(e) => {
+                    crate::log_msg(&format!("[clipboard] monitor start failed: {e:#}"));
+                }
+            }
+        }
     }
 
     pub(crate) fn is_busy(&self) -> bool {
@@ -962,6 +1053,205 @@ impl MemoryCleanerApp {
         })
         .detach();
     }
+
+    /// Show or toggle the clipboard history panel.
+    pub fn show_clipboard_window(&mut self, cx: &mut Context<Self>) {
+        if !self.settings.clipboard_enabled {
+            return;
+        }
+
+        if self.window_visible() {
+            self.clipboard_visible = !self.clipboard_visible;
+        } else {
+            self.clipboard_visible = true;
+            self.activate_window(cx);
+        }
+
+        if self.clipboard_visible {
+            self.refresh_clipboard_items();
+        }
+
+        self.apply_clipboard_window_size(cx);
+        cx.notify();
+    }
+
+    fn apply_clipboard_window_size(&mut self, cx: &mut Context<Self>) {
+        if let Some(handle) = self.window {
+            let expanded = self.settings_expanded;
+            let clipboard_visible = self.clipboard_visible;
+            let _ = handle.update(cx, |_, window, _| {
+                window.resize(window_size(expanded, clipboard_visible));
+            });
+        }
+    }
+
+    pub fn refresh_clipboard_items(&mut self) {
+        if let Some(storage) = &self.clipboard_storage {
+            let search = if self.clipboard_search.is_empty() {
+                None
+            } else {
+                Some(self.clipboard_search.as_str())
+            };
+            match storage.query(self.clipboard_filter, search, 200, 0) {
+                Ok(items) => self.clipboard_items = items,
+                Err(e) => {
+                    crate::log_msg(&format!("[clipboard] query failed: {e:#}"));
+                }
+            }
+        }
+    }
+
+    pub fn set_clipboard_filter(
+        &mut self,
+        filter: Option<crate::clipboard::ContentType>,
+        cx: &mut Context<Self>,
+    ) {
+        self.clipboard_filter = filter;
+        self.refresh_clipboard_items();
+        cx.notify();
+    }
+
+    pub fn clear_clipboard_history(&mut self, cx: &mut Context<Self>) {
+        if let Some(storage) = &self.clipboard_storage {
+            match storage.clear_unpinned() {
+                Ok(_count) => self.refresh_clipboard_items(),
+                Err(e) => crate::log_msg(&format!("[clipboard] clear failed: {e:#}")),
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn paste_clipboard_item(&mut self, id: i64, cx: &mut Context<Self>) {
+        let Some(storage) = &self.clipboard_storage else {
+            return;
+        };
+        let Ok(Some(item)) = storage.get(id) else {
+            return;
+        };
+
+        self.hide_to_tray(cx);
+
+        cx.spawn(async move |_this, _cx| {
+            smol::unblock(move || {
+                crate::clipboard::monitor::pause_monitor(Duration::from_millis(800));
+                let result = match item.content_type {
+                    crate::clipboard::ContentType::Text => item
+                        .text_content
+                        .as_deref()
+                        .map(crate::win32::clipboard::set_text)
+                        .unwrap_or_else(|| Err(anyhow::anyhow!("missing text content"))),
+                    crate::clipboard::ContentType::File => item
+                        .file_paths
+                        .as_deref()
+                        .map(crate::win32::clipboard::set_files)
+                        .unwrap_or_else(|| Err(anyhow::anyhow!("missing file paths"))),
+                };
+                if let Err(e) = result {
+                    crate::log_msg(&format!("[clipboard] set clipboard failed: {e:#}"));
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+                if let Err(e) = crate::win32::clipboard::simulate_paste() {
+                    crate::log_msg(&format!("[clipboard] simulate paste failed: {e:#}"));
+                }
+            })
+            .await;
+        })
+        .detach();
+    }
+
+    pub fn delete_clipboard_item(&mut self, id: i64, cx: &mut Context<Self>) {
+        if let Some(storage) = &self.clipboard_storage {
+            match storage.delete(id) {
+                Ok(()) => self.refresh_clipboard_items(),
+                Err(e) => crate::log_msg(&format!("[clipboard] delete failed: {e:#}")),
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn toggle_clipboard_pin(&mut self, id: i64, cx: &mut Context<Self>) {
+        if let Some(storage) = &self.clipboard_storage {
+            match storage.toggle_pin(id) {
+                Ok(_pinned) => self.refresh_clipboard_items(),
+                Err(e) => crate::log_msg(&format!("[clipboard] toggle pin failed: {e:#}")),
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn move_clipboard_item(&mut self, from_id: i64, to_id: i64, cx: &mut Context<Self>) {
+        if from_id == to_id {
+            return;
+        }
+        self.clipboard_dragging_id = None;
+        self.clipboard_drop_target_id = None;
+        if let Some(storage) = &self.clipboard_storage {
+            match storage.move_item_by_id(from_id, to_id) {
+                Ok(()) => self.refresh_clipboard_items(),
+                Err(e) => crate::log_msg(&format!("[clipboard] move failed: {e:#}")),
+            }
+        }
+        cx.notify();
+    }
+
+    /// Start the clipboard monitor if clipboard is enabled.
+    pub fn start_clipboard_monitor(&mut self) {
+        if !self.settings.clipboard_enabled || self.clipboard_monitor.is_some() {
+            return;
+        }
+        match crate::clipboard::monitor::start_monitor() {
+            Ok((rx, handle)) => {
+                self.clipboard_monitor = Some(handle);
+                crate::log_msg("[clipboard] monitor started");
+                // Spawn a task to process clipboard events
+                // This will be wired up in the tray_rx loop
+                // For now, the rx is dropped — we'll integrate it in the main loop.
+                let _ = rx;
+            }
+            Err(e) => {
+                crate::log_msg(&format!("[clipboard] monitor start failed: {e:#}"));
+            }
+        }
+    }
+
+    /// Process a raw clipboard content (called from monitor thread via channel).
+    pub fn handle_clipboard_content(
+        &mut self,
+        content: crate::clipboard::RawClipboardContent,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::clipboard::handler;
+        let processed = match handler::process(content, None) {
+            Ok(p) => p,
+            Err(e) => {
+                crate::log_msg(&format!("[clipboard] process failed: {e:#}"));
+                return;
+            }
+        };
+
+        if let Some(storage) = &self.clipboard_storage {
+            match storage.insert(
+                processed.content_type,
+                processed.text_content.as_deref(),
+                &processed.preview,
+                processed.file_paths.as_deref(),
+                &processed.content_hash,
+                processed.byte_size,
+                None,
+            ) {
+                Ok(_id) => {
+                    if self.clipboard_visible {
+                        self.refresh_clipboard_items();
+                    }
+                }
+                Err(e) => {
+                    crate::log_msg(&format!("[clipboard] insert failed: {e:#}"));
+                }
+            }
+        }
+        cx.notify();
+    }
 }
 
 /// 创建内存卡片的 GroupBox 容器
@@ -1043,6 +1333,44 @@ impl Render for MemoryCleanerApp {
                 .into_any_element()
         };
 
+        // Left panel content (memory management)
+        let left_panel = {
+            let body = v_flex()
+                .w_full()
+                .flex_shrink_0()
+                .px(px(CONTENT_PADDING))
+                .pt(px(CONTENT_PADDING))
+                .child(memory_row)
+                .when(self.settings_expanded, |body| {
+                    body.gap(px(SECTION_GAP))
+                        .child(render_settings_content(self, cx))
+                });
+
+            v_flex()
+                .w_full()
+                .flex_shrink_0()
+                .min_h_0()
+                .overflow_hidden()
+                .gap(px(SECTION_GAP))
+                .child(body)
+                .child(
+                    div()
+                        .w_full()
+                        .flex_shrink_0()
+                        .px(px(CONTENT_PADDING))
+                        .pb(px(CONTENT_PADDING))
+                        .child(render_cleanup_footer(self, cx)),
+                )
+        };
+
+        let main_content = if self.clipboard_visible {
+            use crate::ui::clipboard_panel::render_clipboard_panel;
+
+            render_clipboard_panel(self, cx).into_any_element()
+        } else {
+            left_panel.into_any_element()
+        };
+
         div()
             .relative()
             .w_full()
@@ -1055,34 +1383,7 @@ impl Render for MemoryCleanerApp {
                         .overflow_hidden()
                         .bg(bg)
                         .child(render_title_bar(self, window, cx))
-                        .child({
-                            let body = v_flex()
-                                .w_full()
-                                .flex_shrink_0()
-                                .px(px(CONTENT_PADDING))
-                                .pt(px(CONTENT_PADDING))
-                                .child(memory_row)
-                                .when(self.settings_expanded, |body| {
-                                    body.gap(px(SECTION_GAP))
-                                        .child(render_settings_content(self, cx))
-                                });
-
-                            v_flex()
-                                .w_full()
-                                .flex_shrink_0()
-                                .min_h_0()
-                                .overflow_hidden()
-                                .gap(px(SECTION_GAP))
-                                .child(body)
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .flex_shrink_0()
-                                        .px(px(CONTENT_PADDING))
-                                        .pb(px(CONTENT_PADDING))
-                                        .child(render_cleanup_footer(self, cx)),
-                                )
-                        }),
+                        .child(main_content),
                 ),
             )
             .children(gpui_component::Root::render_dialog_layer(window, cx))
