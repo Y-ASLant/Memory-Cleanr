@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="App.png" alt="Memory Cleanr" width="128" />
+  <img src="App.png" alt="Memory Cleaner" width="128" />
 </p>
 
-# Memory Cleanr
+# Memory Cleaner
 
 Windows 内存清理工具，基于 Rust + GPUI 构建。提供实时内存监控、可配置的清理区域、系统托盘常驻、全局快捷键，以及一键优化。
 
@@ -45,7 +45,7 @@ make build
 cargo build --release
 ```
 
-构建产物：`target/release/MemoryCleanr.exe`
+构建产物：`target/release/MemoryCleaner.exe`
 
 ### 运行
 
@@ -197,7 +197,7 @@ Windows 会按需将常用页面重新加载到内存。清理后短期内可能
 **如何查看日志？**
 
 - **始终可用：** 诊断信息通过 `OutputDebugString` 输出，可用 [DebugView](https://learn.microsoft.com/en-us/sysinternals/downloads/debugview) 查看（Release 构建无控制台窗口）。
-- **调试日志：** 在标题栏齿轮菜单中开启「调试日志」后，详细运行信息写入程序目录下的 `App.log`（与 `MemoryCleanr.exe` 同目录）。每行格式为 `[unix_secs.millis] 消息`；写入新日志时会自动删除时间戳早于 7 天的旧行。
+- **调试日志：** 在标题栏齿轮菜单中开启「调试日志」后，详细运行信息写入程序目录下的 `App.log`（与 `MemoryCleaner.exe` 同目录）。每行格式为 `[unix_secs.millis] 消息`；写入新日志时会自动删除时间戳早于 7 天的旧行。
 
 ## 友链
 

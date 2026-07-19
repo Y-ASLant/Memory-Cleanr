@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="App.png" alt="Memory Cleanr" width="128" />
+  <img src="App.png" alt="Memory Cleaner" width="128" />
 </p>
 
-# Memory Cleanr
+# Memory Cleaner
 
 A Windows memory optimization tool built with Rust + GPUI. Real-time memory monitoring, configurable cleanup regions, system tray resident, global hotkey, and one-click optimization.
 
@@ -45,7 +45,7 @@ make build
 cargo build --release
 ```
 
-Build artifact: `target/release/MemoryCleanr.exe`
+Build artifact: `target/release/MemoryCleaner.exe`
 
 ### Run
 
@@ -197,7 +197,7 @@ Check whether the hotkey is enabled in the Window Behavior dialog, and whether t
 **How do I view logs?**
 
 - **Always available:** Diagnostic output goes to `OutputDebugString`, viewable with [DebugView](https://learn.microsoft.com/en-us/sysinternals/downloads/debugview) (Release builds have no console window).
-- **Debug logging:** Enable "Debug Logging" in the title bar gear menu; detailed runtime info is written to `App.log` in the application directory (same directory as `MemoryCleanr.exe`). Each line is formatted as `[unix_secs.millis] message`; entries with timestamps older than 7 days are automatically purged on write.
+- **Debug logging:** Enable "Debug Logging" in the title bar gear menu; detailed runtime info is written to `App.log` in the application directory (same directory as `MemoryCleaner.exe`). Each line is formatted as `[unix_secs.millis] message`; entries with timestamps older than 7 days are automatically purged on write.
 
 ## Links
 

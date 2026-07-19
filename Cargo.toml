@@ -1,22 +1,22 @@
 [package]
-name = "memory-cleanr"
-version = "1.0.1"
+name = "memory-cleaner"
+version = "1.0.2"
 edition = "2024"
 rust-version = "1.96"
 description = "Memory Cleaner"
 
 [package.metadata.winres]
-OriginalFilename = "MemoryCleanr.exe"
+OriginalFilename = "MemoryCleaner.exe"
 FileDescription = "Memory Cleaner"
 ProductName = "Memory Cleaner"
-InternalName = "MemoryCleanr"
+InternalName = "MemoryCleaner"
 
 [[bin]]
-name = "MemoryCleanr"
+name = "MemoryCleaner"
 path = "src/main.rs"
 
 [lib]
-name = "memory_cleanr"
+name = "memory_cleaner"
 path = "src/lib.rs"
 
 [dev-dependencies]

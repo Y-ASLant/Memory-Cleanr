@@ -17,7 +17,7 @@ use windows::Win32::UI::Shell::{
 };
 use windows::core::{HSTRING, Interface};
 
-pub const APP_USER_MODEL_ID: &str = "MemoryCleanr.App";
+pub const APP_USER_MODEL_ID: &str = "MemoryCleaner.App";
 
 pub fn init() -> Result<()> {
     unsafe {
@@ -107,7 +107,7 @@ fn start_menu_shortcut_path() -> Result<PathBuf> {
     let base = OsString::from_wide(&appdata[..len as usize]);
     Ok(PathBuf::from(base)
         .join(r"Microsoft\Windows\Start Menu\Programs")
-        .join("Memory Cleanr.lnk"))
+        .join("Memory Cleaner.lnk"))
 }
 
 fn escape_xml(text: &str) -> String {

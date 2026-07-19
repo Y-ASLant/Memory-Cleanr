@@ -259,5 +259,5 @@ log.debug_enabled:
 
 # Window title
 app.title:
-  zh-CN: "Memory Cleanr"
-  en: "Memory Cleanr"
+  zh-CN: "Memory Cleaner"
+  en: "Memory Cleaner"

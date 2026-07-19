@@ -2,7 +2,7 @@
 
 use gpui::{actions, *};
 
-use memory_cleanr::{
+use memory_cleaner::{
     app::{self, AppEntityHolder},
     locale, log_msg,
     settings::Settings,

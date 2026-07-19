@@ -1,5 +1,5 @@
-use memory_cleanr::optimize::MemoryAreas;
-use memory_cleanr::settings::Settings;
+use memory_cleaner::optimize::MemoryAreas;
+use memory_cleaner::settings::Settings;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
