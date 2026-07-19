@@ -252,9 +252,10 @@ pub fn render_clipboard_item(
         });
 
     if is_deleting {
+        use crate::ui::clipboard_panel::DELETE_ANIM_MS;
         card.with_animation(
             ("clipboard-delete", item_id as u32),
-            Animation::new(Duration::from_millis(160)).with_easing(ease_out_quint()),
+            Animation::new(Duration::from_millis(DELETE_ANIM_MS)).with_easing(ease_out_quint()),
             |this, delta| this.opacity(1.0 - delta),
         )
         .into_any_element()

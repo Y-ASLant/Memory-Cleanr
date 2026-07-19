@@ -27,6 +27,8 @@ pub const ROW_HEIGHT: f32 = ITEM_HEIGHT + ITEM_GAP;
 /// Match ElegantClipboard / dnd-kit sortable transition.
 const SHIFT_DURATION: Duration = Duration::from_millis(120);
 const SHIFT_TICK: Duration = Duration::from_millis(8);
+/// Exit fade + sibling collapse before the row is removed from data.
+pub const DELETE_ANIM_MS: u64 = 160;
 
 /// Render the clipboard panel (full window content when clipboard mode is active).
 pub fn render_clipboard_panel(
@@ -315,6 +317,51 @@ pub fn sync_clipboard_shift_anims(app: &mut MemoryCleanerApp, cx: &mut Context<M
     }
 }
 
+/// Slide cards below a deleting row up into its slot (FLIP), while the row fades.
+pub fn begin_delete_collapse(
+    app: &mut MemoryCleanerApp,
+    deleted_index: usize,
+    cx: &mut Context<MemoryCleanerApp>,
+) {
+    let now = Instant::now();
+    let deleting_id = app.clipboard_deleting_id;
+    let ids: Vec<(usize, i64)> = app
+        .clipboard_items
+        .iter()
+        .enumerate()
+        .map(|(idx, item)| (idx, item.id))
+        .collect();
+
+    for (idx, id) in ids {
+        if Some(id) == deleting_id {
+            // Subtle lift while fading out.
+            app.clipboard_shift_anims.insert(
+                id,
+                ClipboardShiftAnim {
+                    from: sample_shift_y(app, id, now),
+                    to: -12.,
+                    start: now,
+                },
+            );
+            continue;
+        }
+        if idx <= deleted_index {
+            continue;
+        }
+        let current = sample_shift_y(app, id, now);
+        app.clipboard_shift_anims.insert(
+            id,
+            ClipboardShiftAnim {
+                from: current,
+                to: -ROW_HEIGHT,
+                start: now,
+            },
+        );
+    }
+
+    start_clipboard_shift_ticker(app, cx);
+}
+
 fn start_clipboard_shift_ticker(
     app: &mut MemoryCleanerApp,
     cx: &mut Context<MemoryCleanerApp>,
@@ -326,9 +373,12 @@ fn start_clipboard_shift_ticker(
             Timer::after(SHIFT_TICK).await;
             let keep = this
                 .update(cx, |app, cx| {
-                    if app.clipboard_shift_tick_gen != tick_gen
-                        || app.clipboard_dragging_id.is_none()
-                    {
+                    if app.clipboard_shift_tick_gen != tick_gen {
+                        return false;
+                    }
+                    let live = app.clipboard_dragging_id.is_some()
+                        || app.clipboard_deleting_id.is_some();
+                    if !live {
                         return false;
                     }
                     let now = Instant::now();
@@ -338,7 +388,7 @@ fn start_clipboard_shift_ticker(
                     if animating {
                         cx.notify();
                     }
-                    // Keep the ticker alive for the whole drag so retargets are smooth.
+                    // Keep ticking while drag/delete is active so retargets stay smooth.
                     true
                 })
                 .unwrap_or(false);

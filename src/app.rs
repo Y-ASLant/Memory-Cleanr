@@ -1247,19 +1247,30 @@ impl MemoryCleanerApp {
         });
     }
 
-    /// Fade the card out, then remove it from storage.
+    /// Fade the card out, collapse siblings into the gap, then remove from storage.
     pub fn begin_clipboard_item_delete(&mut self, id: i64, cx: &mut Context<Self>) {
-        if self.clipboard_deleting_id.is_some() {
+        if self.clipboard_deleting_id.is_some() || self.clipboard_dragging_id.is_some() {
             return;
         }
+        let Some(index) = self.clipboard_items.iter().position(|item| item.id == id) else {
+            return;
+        };
+
         self.clipboard_deleting_id = Some(id);
         self.clipboard_hovered_id = None;
+        crate::ui::clipboard_panel::begin_delete_collapse(self, index, cx);
         cx.notify();
 
+        let anim_ms = crate::ui::clipboard_panel::DELETE_ANIM_MS;
         cx.spawn(async move |this, cx| {
-            Timer::after(Duration::from_millis(160)).await;
+            Timer::after(Duration::from_millis(anim_ms)).await;
             let _ = this.update(cx, |app, cx| {
+                // FLIP handoff: siblings are already visually at -ROW_HEIGHT; drop the
+                // empty slot and clear transforms in the same frame so layout catches up
+                // without a flash jump.
                 app.clipboard_deleting_id = None;
+                app.clipboard_shift_anims.clear();
+                app.clipboard_shift_tick_gen = app.clipboard_shift_tick_gen.wrapping_add(1);
                 app.delete_clipboard_item(id, cx);
             });
         })
