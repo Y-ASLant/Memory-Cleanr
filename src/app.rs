@@ -1,8 +1,9 @@
 use rust_i18n::t;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use gpui::*;
@@ -172,8 +173,20 @@ pub struct MemoryCleanerApp {
     pub clipboard_hovered_id: Option<i64>,
     /// Item playing delete exit animation before removal.
     pub clipboard_deleting_id: Option<i64>,
+    /// Per-item translateY tween while reordering (dnd-kit style make-way).
+    pub clipboard_shift_anims: HashMap<i64, ClipboardShiftAnim>,
+    /// Bumps to cancel the in-flight shift ticker.
+    pub clipboard_shift_tick_gen: u32,
     /// Scroll handle for the clipboard virtual list.
     pub clipboard_list_scroll: UniformListScrollHandle,
+}
+
+/// One card's translateY animation during drag reorder.
+#[derive(Clone, Debug)]
+pub struct ClipboardShiftAnim {
+    pub from: f32,
+    pub to: f32,
+    pub start: Instant,
 }
 
 impl MemoryCleanerApp {
@@ -246,6 +259,8 @@ impl MemoryCleanerApp {
             clipboard_dragging_id: None,
             clipboard_hovered_id: None,
             clipboard_deleting_id: None,
+            clipboard_shift_anims: HashMap::new(),
+            clipboard_shift_tick_gen: 0,
             clipboard_list_scroll: UniformListScrollHandle::new(),
         };
 
@@ -1345,8 +1360,7 @@ impl MemoryCleanerApp {
         if from_id == to_id {
             return;
         }
-        self.clipboard_dragging_id = None;
-        self.clipboard_drop_target_id = None;
+        self.clear_clipboard_drag_preview();
         if let Some(storage) = &self.clipboard_storage {
             match storage.move_item_by_id(from_id, to_id) {
                 Ok(()) => self.refresh_clipboard_items(),
@@ -1354,6 +1368,13 @@ impl MemoryCleanerApp {
             }
         }
         cx.notify();
+    }
+
+    pub fn clear_clipboard_drag_preview(&mut self) {
+        self.clipboard_dragging_id = None;
+        self.clipboard_drop_target_id = None;
+        self.clipboard_shift_anims.clear();
+        self.clipboard_shift_tick_gen = self.clipboard_shift_tick_gen.wrapping_add(1);
     }
 
     /// Start the clipboard monitor if clipboard is enabled.
@@ -1435,8 +1456,7 @@ impl Render for MemoryCleanerApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Drop / Esc / release-outside clears GPUI drag; sync our reorder preview state.
         if self.clipboard_dragging_id.is_some() && !cx.has_active_drag() {
-            self.clipboard_dragging_id = None;
-            self.clipboard_drop_target_id = None;
+            self.clear_clipboard_drag_preview();
         }
         use crate::ui::memory_card::render_memory_card;
         use crate::ui::settings_page::{render_cleanup_footer, render_settings_content};

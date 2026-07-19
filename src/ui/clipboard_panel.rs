@@ -1,12 +1,14 @@
 use std::ops::Range;
+use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Disableable, button::Button, h_flex, label::Label, v_flex,
 };
+use smol::Timer;
 
-use crate::app::MemoryCleanerApp;
+use crate::app::{ClipboardShiftAnim, MemoryCleanerApp};
 use crate::clipboard::ContentType;
 use crate::ui::clipboard_item_card::{
     DragClipboardItem, ITEM_HEIGHT, render_clipboard_item,
@@ -22,6 +24,9 @@ const STATUS_BAR_H: f32 = 28.;
 pub const ITEM_GAP: f32 = 4.;
 /// Row height including gap (uniform_list measures one row).
 pub const ROW_HEIGHT: f32 = ITEM_HEIGHT + ITEM_GAP;
+/// Match ElegantClipboard / dnd-kit sortable transition.
+const SHIFT_DURATION: Duration = Duration::from_millis(120);
+const SHIFT_TICK: Duration = Duration::from_millis(8);
 
 /// Render the clipboard panel (full window content when clipboard mode is active).
 pub fn render_clipboard_panel(
@@ -115,13 +120,12 @@ pub fn render_clipboard_panel(
                     }))
                     .on_drop(cx.listener(|app, drag: &DragClipboardItem, _, cx| {
                         let target = app.clipboard_drop_target_id;
-                        app.clipboard_drop_target_id = None;
-                        app.clipboard_dragging_id = None;
                         if let Some(to) = target
                             && drag.id != to
                         {
                             app.move_clipboard_item(drag.id, to, cx);
                         } else {
+                            app.clear_clipboard_drag_preview();
                             cx.notify();
                         }
                     }))
@@ -170,34 +174,15 @@ fn render_visible_rows(
     range: Range<usize>,
     cx: &mut Context<MemoryCleanerApp>,
 ) -> Vec<AnyElement> {
-    let dragging_id = app.clipboard_dragging_id;
-    let drop_target_id = app.clipboard_drop_target_id;
-    let active_idx = dragging_id.and_then(|id| {
-        app.clipboard_items
-            .iter()
-            .position(|item| item.id == id)
-    });
-    let over_idx = drop_target_id.and_then(|id| {
-        app.clipboard_items
-            .iter()
-            .position(|item| item.id == id)
-    });
+    let now = Instant::now();
 
     range
         .filter_map(|idx| {
             let item = app.clipboard_items.get(idx)?;
             let id = item.id;
             let selected = app.clipboard_selected == Some(idx);
-            let is_source = dragging_id == Some(id);
-            // dnd-kit verticalListSortingStrategy: translateY only — never reorder rows.
-            // Set the target offset directly (no with_animation keyed on over): GPUI
-            // oneshot animations restart on each notify and cause the bounce.
-            let target_y = match (active_idx, over_idx) {
-                (Some(active), Some(over)) if !is_source => {
-                    sortable_shift_y(idx, active, over)
-                }
-                _ => 0.,
-            };
+            // Sample the in-flight 120ms ease-out tween (not the raw target).
+            let shift_y = sample_shift_y(app, id, now);
 
             let card = render_clipboard_item(item, idx, selected, app, cx);
 
@@ -212,7 +197,7 @@ fn render_visible_rows(
                             .absolute()
                             .w_full()
                             .h(px(ITEM_HEIGHT))
-                            .top(px(target_y))
+                            .top(px(shift_y))
                             .child(card),
                     )
                     .into_any_element(),
@@ -222,7 +207,7 @@ fn render_visible_rows(
 }
 
 /// Same geometry as `@dnd-kit` `verticalListSortingStrategy` for equal-height rows.
-fn sortable_shift_y(index: usize, active: usize, over: usize) -> f32 {
+pub(crate) fn sortable_shift_y(index: usize, active: usize, over: usize) -> f32 {
     if active == over {
         return 0.;
     }
@@ -236,6 +221,133 @@ fn sortable_shift_y(index: usize, active: usize, over: usize) -> f32 {
         return ROW_HEIGHT;
     }
     0.
+}
+
+fn ease_out_quad(t: f32) -> f32 {
+    let t = t.clamp(0., 1.);
+    1.0 - (1.0 - t) * (1.0 - t)
+}
+
+fn sample_shift_y(app: &MemoryCleanerApp, id: i64, now: Instant) -> f32 {
+    let Some(anim) = app.clipboard_shift_anims.get(&id) else {
+        return 0.;
+    };
+    let elapsed = now.saturating_duration_since(anim.start);
+    let t = elapsed.as_secs_f32() / SHIFT_DURATION.as_secs_f32();
+    if t >= 1. {
+        return anim.to;
+    }
+    anim.from + (anim.to - anim.from) * ease_out_quad(t)
+}
+
+/// Retarget every card's translateY tween from its *current* visual position.
+/// Call whenever `clipboard_drop_target_id` changes (or drag starts).
+pub fn sync_clipboard_shift_anims(app: &mut MemoryCleanerApp, cx: &mut Context<MemoryCleanerApp>) {
+    let dragging_id = app.clipboard_dragging_id;
+    let Some(active) = dragging_id.and_then(|id| {
+        app.clipboard_items
+            .iter()
+            .position(|item| item.id == id)
+    }) else {
+        app.clipboard_shift_anims.clear();
+        return;
+    };
+    let over = app
+        .clipboard_drop_target_id
+        .and_then(|id| {
+            app.clipboard_items
+                .iter()
+                .position(|item| item.id == id)
+        })
+        .unwrap_or(active);
+
+    let now = Instant::now();
+    let mut changed = false;
+    let ids: Vec<(usize, i64)> = app
+        .clipboard_items
+        .iter()
+        .enumerate()
+        .map(|(idx, item)| (idx, item.id))
+        .collect();
+
+    for (idx, id) in ids {
+        let target = if Some(id) == dragging_id {
+            0.
+        } else {
+            sortable_shift_y(idx, active, over)
+        };
+        let current = sample_shift_y(app, id, now);
+        let prev_to = app
+            .clipboard_shift_anims
+            .get(&id)
+            .map(|a| a.to)
+            .unwrap_or(0.);
+        if (prev_to - target).abs() > 0.5 {
+            app.clipboard_shift_anims.insert(
+                id,
+                ClipboardShiftAnim {
+                    from: current,
+                    to: target,
+                    start: now,
+                },
+            );
+            changed = true;
+        } else if !app.clipboard_shift_anims.contains_key(&id) && target.abs() > 0.5 {
+            app.clipboard_shift_anims.insert(
+                id,
+                ClipboardShiftAnim {
+                    from: 0.,
+                    to: target,
+                    start: now,
+                },
+            );
+            changed = true;
+        }
+    }
+
+    // Drop anims for items no longer in the list.
+    app.clipboard_shift_anims
+        .retain(|id, _| app.clipboard_items.iter().any(|item| item.id == *id));
+
+    if changed {
+        start_clipboard_shift_ticker(app, cx);
+        cx.notify();
+    }
+}
+
+fn start_clipboard_shift_ticker(
+    app: &mut MemoryCleanerApp,
+    cx: &mut Context<MemoryCleanerApp>,
+) {
+    app.clipboard_shift_tick_gen = app.clipboard_shift_tick_gen.wrapping_add(1);
+    let tick_gen = app.clipboard_shift_tick_gen;
+    cx.spawn(async move |this, cx| {
+        loop {
+            Timer::after(SHIFT_TICK).await;
+            let keep = this
+                .update(cx, |app, cx| {
+                    if app.clipboard_shift_tick_gen != tick_gen
+                        || app.clipboard_dragging_id.is_none()
+                    {
+                        return false;
+                    }
+                    let now = Instant::now();
+                    let animating = app.clipboard_shift_anims.values().any(|anim| {
+                        now.saturating_duration_since(anim.start) < SHIFT_DURATION
+                    });
+                    if animating {
+                        cx.notify();
+                    }
+                    // Keep the ticker alive for the whole drag so retargets are smooth.
+                    true
+                })
+                .unwrap_or(false);
+            if !keep {
+                break;
+            }
+        }
+    })
+    .detach();
 }
 
 /// Resolve `over` from pointer Y — closest row center (dnd-kit `closestCenter` for
@@ -286,7 +398,7 @@ fn update_drop_target_from_pointer(
     let best_id = items[best_idx].id;
     if app.clipboard_drop_target_id != Some(best_id) {
         app.clipboard_drop_target_id = Some(best_id);
-        cx.notify();
+        sync_clipboard_shift_anims(app, cx);
     }
 }
 

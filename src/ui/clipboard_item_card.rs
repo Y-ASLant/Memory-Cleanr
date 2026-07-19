@@ -195,10 +195,12 @@ pub fn render_clipboard_item(
                     let app_entity = app_entity.clone();
                     move |item, _offset, _window, cx| {
                         app_entity.update(cx, |app, cx| {
+                            app.clipboard_shift_anims.clear();
                             app.clipboard_dragging_id = Some(item.id);
-                            // Start with over = self so the hole begins under the card.
+                            // Start with over = self (no sibling shift yet).
                             app.clipboard_drop_target_id = Some(item.id);
                             app.clipboard_hovered_id = None;
+                            crate::ui::clipboard_panel::sync_clipboard_shift_anims(app, cx);
                             cx.notify();
                         });
                         let preview = preview.clone();
