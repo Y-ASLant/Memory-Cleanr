@@ -168,6 +168,8 @@ pub struct MemoryCleanerApp {
     pub clipboard_drop_target_id: Option<i64>,
     /// Item currently being dragged (dims the source card).
     pub clipboard_dragging_id: Option<i64>,
+    /// Scroll handle for the clipboard virtual list.
+    pub clipboard_list_scroll: UniformListScrollHandle,
 }
 
 impl MemoryCleanerApp {
@@ -238,6 +240,7 @@ impl MemoryCleanerApp {
             clipboard_selected: None,
             clipboard_drop_target_id: None,
             clipboard_dragging_id: None,
+            clipboard_list_scroll: UniformListScrollHandle::new(),
         };
 
         cx.set_global(AppEntityHolder(cx.entity()));
@@ -1121,7 +1124,9 @@ impl MemoryCleanerApp {
 
     pub fn refresh_clipboard_items(&mut self) {
         if let Some(storage) = &self.clipboard_storage {
-            match storage.query(self.clipboard_filter, None, 200, 0) {
+            // Virtual list can scroll many rows; keep a generous in-memory window.
+            let limit = self.settings.clipboard_max_history.clamp(200, 5_000) as usize;
+            match storage.query(self.clipboard_filter, None, limit, 0) {
                 Ok(items) => self.clipboard_items = items,
                 Err(e) => {
                     crate::log_msg(&format!("[clipboard] query failed: {e:#}"));
@@ -1158,28 +1163,61 @@ impl MemoryCleanerApp {
             return;
         };
 
-        // Temporarily hide (not destroy) so paste can reach the previous app, then show again.
-        cx.spawn(async move |_this, _cx| {
-            let paste = smol::unblock(move || {
-                crate::clipboard::monitor::pause_monitor(Duration::from_millis(800));
-                match item.content_type {
-                    crate::clipboard::ContentType::Text => item
-                        .text_content
-                        .as_deref()
-                        .map(crate::win32::clipboard::set_text)
-                        .unwrap_or_else(|| Err(anyhow::anyhow!("missing text content"))),
-                    crate::clipboard::ContentType::File => item
-                        .file_paths
-                        .as_deref()
-                        .map(crate::win32::clipboard::set_files)
-                        .unwrap_or_else(|| Err(anyhow::anyhow!("missing file paths"))),
-                }?;
-                crate::win32::clipboard::paste_to_previous_window()
+        // Hide on UI thread → paste on worker → show again (window not destroyed).
+        cx.spawn(async move |this, cx| {
+            let write = smol::unblock({
+                let item = item.clone();
+                move || {
+                    crate::clipboard::monitor::pause_monitor(Duration::from_millis(800));
+                    match item.content_type {
+                        crate::clipboard::ContentType::Text => item
+                            .text_content
+                            .as_deref()
+                            .map(crate::win32::clipboard::set_text)
+                            .unwrap_or_else(|| Err(anyhow::anyhow!("missing text content"))),
+                        crate::clipboard::ContentType::File => item
+                            .file_paths
+                            .as_deref()
+                            .map(crate::win32::clipboard::set_files)
+                            .unwrap_or_else(|| Err(anyhow::anyhow!("missing file paths"))),
+                    }
+                }
             })
             .await;
+            if let Err(e) = write {
+                crate::log_msg(&format!("[clipboard] set clipboard failed: {e:#}"));
+                return;
+            }
+
+            let _ = this.update(cx, |app, cx| {
+                if let Some(handle) = app.window {
+                    let _ = handle.update(cx, |_, window, _| {
+                        if let Ok(hwnd) = win32::window::hwnd_from_window(window) {
+                            win32::focus::set_our_hwnd(hwnd);
+                            win32::window::hide_hwnd(hwnd);
+                        }
+                    });
+                }
+            });
+
+            Timer::after(Duration::from_millis(100)).await;
+
+            let paste = smol::unblock(crate::win32::clipboard::paste_into_target).await;
             if let Err(e) = paste {
                 crate::log_msg(&format!("[clipboard] paste failed: {e:#}"));
             }
+
+            let _ = this.update(cx, |app, cx| {
+                if let Some(handle) = app.window {
+                    let _ = handle.update(cx, |_, window, _| {
+                        if let Ok(hwnd) = win32::window::hwnd_from_window(window) {
+                            // Reappear first without stealing focus, then take focus back.
+                            win32::window::show_hwnd_noactivate(hwnd);
+                            let _ = win32::focus::restore_our_foreground();
+                        }
+                    });
+                }
+            });
         })
         .detach();
     }

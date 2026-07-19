@@ -1,8 +1,7 @@
 //! Write to the system clipboard and paste into the previous foreground window.
 //!
 //! Elevated processes cannot `SendInput` into medium-IL apps (UIPI). After writing
-//! the clipboard we restore the target HWND and post `WM_PASTE`, with `SendInput`
-//! as a best-effort fallback for elevated targets.
+//! the clipboard we hide ourselves, restore the target HWND, and post `WM_PASTE`.
 
 use std::mem::size_of;
 
@@ -32,15 +31,25 @@ struct DropFiles {
     f_wide: i32,
 }
 
+fn open_clipboard_retry() -> Result<()> {
+    for attempt in 0..8 {
+        if unsafe { OpenClipboard(None) }.is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(15 + attempt * 10));
+    }
+    anyhow::bail!("OpenClipboard failed after retries")
+}
+
 /// Set Unicode text on the system clipboard.
 pub fn set_text(text: &str) -> Result<()> {
     let mut utf16: Vec<u16> = text.encode_utf16().collect();
     utf16.push(0);
     let byte_len = utf16.len() * 2;
 
-    unsafe {
-        OpenClipboard(None).context("OpenClipboard failed")?;
-        let result = (|| -> Result<()> {
+    open_clipboard_retry()?;
+    let result = (|| -> Result<()> {
+        unsafe {
             EmptyClipboard().context("EmptyClipboard failed")?;
 
             let hmem = GlobalAlloc(GMEM_MOVEABLE, byte_len).context("GlobalAlloc failed")?;
@@ -54,10 +63,12 @@ pub fn set_text(text: &str) -> Result<()> {
             SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hmem.0)))
                 .context("SetClipboardData failed")?;
             Ok(())
-        })();
+        }
+    })();
+    unsafe {
         let _ = CloseClipboard();
-        result
     }
+    result
 }
 
 /// Set file paths on the system clipboard (CF_HDROP).
@@ -75,9 +86,9 @@ pub fn set_files(paths: &[String]) -> Result<()> {
     path_data.push(0);
     let total_size = header_size + path_data.len() * 2;
 
-    unsafe {
-        OpenClipboard(None).context("OpenClipboard failed")?;
-        let result = (|| -> Result<()> {
+    open_clipboard_retry()?;
+    let result = (|| -> Result<()> {
+        unsafe {
             EmptyClipboard().context("EmptyClipboard failed")?;
 
             let hmem = GlobalAlloc(GMEM_MOVEABLE, total_size).context("GlobalAlloc failed")?;
@@ -102,53 +113,49 @@ pub fn set_files(paths: &[String]) -> Result<()> {
             let _ = GlobalUnlock(hmem);
             SetClipboardData(CF_HDROP, Some(HANDLE(hmem.0))).context("SetClipboardData failed")?;
             Ok(())
-        })();
+        }
+    })();
+    unsafe {
         let _ = CloseClipboard();
-        result
     }
+    result
 }
 
-/// Paste into the previously focused window without destroying our UI.
+/// Paste into the previously focused window.
 ///
-/// Temporarily `SW_HIDE`s our window so the target can take focus, pastes, then
-/// shows our window again (state/layout preserved — not a tray close).
-pub fn paste_to_previous_window() -> Result<()> {
-    let our = focus::our_hwnd();
-    if let Some(hwnd) = our {
-        crate::win32::window::hide_hwnd(hwnd);
-    }
-
-    std::thread::sleep(std::time::Duration::from_millis(50));
-    let _ = focus::restore_previous_foreground();
-    std::thread::sleep(std::time::Duration::from_millis(60));
+/// Caller should already have hidden our window (so the OS can activate the target).
+/// This does **not** show our window again — leave that to the UI thread.
+pub fn paste_into_target() -> Result<()> {
+    // Whoever Windows activated after our hide is the best fallback target.
+    focus::capture_foreground_after_hide();
 
     let target = focus::paste_target_hwnd();
-    if let Some(hwnd) = target {
-        // Cross-integrity paste: WM_PASTE is not blocked by UIPI the way SendInput is.
-        if post_paste(hwnd) {
-            crate::log_msg("[clipboard] WM_PASTE posted");
-            std::thread::sleep(std::time::Duration::from_millis(30));
-        } else {
-            crate::log_msg("[clipboard] WM_PASTE post failed, trying SendInput");
-        }
-    } else {
+    let Some(hwnd) = target else {
         crate::log_msg("[clipboard] no paste target hwnd");
+        anyhow::bail!("no paste target");
+    };
+
+    if !focus::force_foreground(hwnd) {
+        crate::log_msg("[clipboard] force_foreground failed, continuing with WM_PASTE");
     }
+    std::thread::sleep(std::time::Duration::from_millis(80));
+
+    if post_paste(hwnd) {
+        crate::log_msg("[clipboard] WM_PASTE delivered");
+    } else {
+        crate::log_msg("[clipboard] WM_PASTE failed, trying SendInput");
+    }
+    std::thread::sleep(std::time::Duration::from_millis(20));
 
     // Best-effort for elevated targets / apps that ignore WM_PASTE.
     simulate_paste()?;
-    std::thread::sleep(std::time::Duration::from_millis(40));
-
-    if let Some(hwnd) = our {
-        crate::win32::window::show_hwnd(hwnd);
-        let _ = focus::restore_our_foreground();
-    }
+    // Give the target time to apply the paste before we steal focus back.
+    std::thread::sleep(std::time::Duration::from_millis(150));
     Ok(())
 }
 
 fn post_paste(hwnd: HWND) -> bool {
     unsafe {
-        // Prefer SendMessageTimeout so hung targets don't block us forever.
         let mut result: usize = 0;
         let sent = SendMessageTimeoutW(
             hwnd,
@@ -156,7 +163,7 @@ fn post_paste(hwnd: HWND) -> bool {
             WPARAM(0),
             LPARAM(0),
             SMTO_ABORTIFHUNG,
-            200,
+            500,
             Some(&mut result),
         );
         sent.0 != 0 || PostMessageW(Some(hwnd), WM_PASTE, WPARAM(0), LPARAM(0)).is_ok()

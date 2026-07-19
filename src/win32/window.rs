@@ -4,9 +4,9 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
     GWL_EXSTYLE, GWL_STYLE, GetWindowLongPtrW, HWND_NOTOPMOST, HWND_TOPMOST, IsIconic,
-    SHOW_WINDOW_CMD, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos, ShowWindow, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
-    WS_MAXIMIZEBOX,
+    SHOW_WINDOW_CMD, SW_HIDE, SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX,
 };
 
 fn show_window(hwnd: HWND, cmd: SHOW_WINDOW_CMD) -> Result<()> {
@@ -96,6 +96,11 @@ pub fn hide_hwnd(hwnd: HWND) {
 /// Show a previously hidden window again.
 pub fn show_hwnd(hwnd: HWND) {
     let _ = show_window(hwnd, SW_SHOW);
+}
+
+/// Show without activating (keeps paste target focused while our UI reappears).
+pub fn show_hwnd_noactivate(hwnd: HWND) {
+    let _ = show_window(hwnd, SW_SHOWNOACTIVATE);
 }
 
 /// Remove the maximize/restore button from the window title bar.

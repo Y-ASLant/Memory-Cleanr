@@ -1,8 +1,8 @@
+use std::ops::Range;
+
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::{
-    ActiveTheme, button::Button, h_flex, label::Label, scroll::ScrollableElement as _, v_flex,
-};
+use gpui_component::{ActiveTheme, button::Button, h_flex, label::Label, v_flex};
 
 use crate::app::MemoryCleanerApp;
 use crate::clipboard::{ClipboardItem, ContentType};
@@ -17,7 +17,9 @@ const FILTER_BAR_H: f32 = 34.;
 /// Status bar height.
 const STATUS_BAR_H: f32 = 28.;
 /// Vertical gap between cards (`mb_1`).
-const ITEM_GAP: f32 = 4.;
+pub const ITEM_GAP: f32 = 4.;
+/// Row height including gap (uniform_list measures one row).
+pub const ROW_HEIGHT: f32 = ITEM_HEIGHT + ITEM_GAP;
 
 /// Render the clipboard panel (full window content when clipboard mode is active).
 pub fn render_clipboard_panel(
@@ -27,13 +29,14 @@ pub fn render_clipboard_panel(
     let theme = cx.theme();
     let muted = theme.muted_foreground;
     let border = theme.border;
-    let items = &app.clipboard_items;
-    let total = items.len();
+    let total = app.clipboard_items.len();
     let active_filter = app.clipboard_filter;
-    let is_dragging = app.clipboard_dragging_id.is_some();
-    // Keep source list order; only preview-move the dragged id to `over` (dnd-kit arrayMove).
-    let display_items = preview_ordered_items(
-        items,
+    let entity = cx.entity().clone();
+    let scroll = app.clipboard_list_scroll.clone();
+
+    // Display count uses the same preview order as drag (arrayMove while dragging).
+    let display_count = preview_ordered_count(
+        &app.clipboard_items,
         app.clipboard_dragging_id,
         app.clipboard_drop_target_id,
     );
@@ -97,14 +100,13 @@ pub fn render_clipboard_panel(
                     )
                     .into_any_element()
             } else {
-                v_flex()
+                div()
                     .id("clipboard-item-list")
                     .flex_1()
                     .min_h_0()
                     .w_full()
                     .px_2()
                     .py_1()
-                    .overflow_y_scrollbar()
                     .on_drag_move(cx.listener(|app, e: &DragMoveEvent<DragClipboardItem>, _, cx| {
                         update_drop_target_from_pointer(app, e, cx);
                     }))
@@ -120,17 +122,18 @@ pub fn render_clipboard_panel(
                             cx.notify();
                         }
                     }))
-                    .children(display_items.into_iter().enumerate().map(|(idx, item)| {
-                        let selected = app.clipboard_selected == Some(idx);
-                        let dimmed =
-                            is_dragging && app.clipboard_dragging_id != Some(item.id);
-                        div()
-                            .w_full()
-                            .mb_1()
-                            .when(dimmed, |el| el.opacity(0.88))
-                            .child(render_clipboard_item(item, idx, selected, app, cx))
-                            .into_any_element()
-                    }))
+                    .child(
+                        uniform_list("clipboard-virtual-list", display_count, {
+                            let entity = entity.clone();
+                            move |range: Range<usize>, _window, cx| {
+                                entity.update(cx, |app, cx| render_visible_rows(app, range, cx))
+                            }
+                        })
+                        .track_scroll(&scroll)
+                        .with_sizing_behavior(ListSizingBehavior::Auto)
+                        .flex_1()
+                        .size_full(),
+                    )
                     .into_any_element()
             }
         })
@@ -157,6 +160,54 @@ pub fn render_clipboard_panel(
         )
 }
 
+fn render_visible_rows(
+    app: &mut MemoryCleanerApp,
+    range: Range<usize>,
+    cx: &mut Context<MemoryCleanerApp>,
+) -> Vec<AnyElement> {
+    let display_ids: Vec<(usize, i64)> = {
+        let display = preview_ordered_items(
+            &app.clipboard_items,
+            app.clipboard_dragging_id,
+            app.clipboard_drop_target_id,
+        );
+        range
+            .filter_map(|idx| display.get(idx).map(|item| (idx, item.id)))
+            .collect()
+    };
+    let is_dragging = app.clipboard_dragging_id.is_some();
+
+    display_ids
+        .into_iter()
+        .filter_map(|(idx, id)| {
+            let item = app.clipboard_items.iter().find(|item| item.id == id)?;
+            let selected = app.clipboard_selected == Some(idx);
+            let dimmed = is_dragging && app.clipboard_dragging_id != Some(item.id);
+            Some(
+                div()
+                    .w_full()
+                    .h(px(ROW_HEIGHT))
+                    .when(dimmed, |el| el.opacity(0.88))
+                    .child(
+                        div()
+                            .w_full()
+                            .h(px(ITEM_HEIGHT))
+                            .child(render_clipboard_item(item, idx, selected, app, cx)),
+                    )
+                    .into_any_element(),
+            )
+        })
+        .collect()
+}
+
+fn preview_ordered_count(
+    items: &[ClipboardItem],
+    dragging_id: Option<i64>,
+    drop_target_id: Option<i64>,
+) -> usize {
+    preview_ordered_items(items, dragging_id, drop_target_id).len()
+}
+
 /// Like `@dnd-kit` `arrayMove`: move dragged item to the `over` item's index.
 fn preview_ordered_items(
     items: &[ClipboardItem],
@@ -177,15 +228,11 @@ fn preview_ordered_items(
         return ordered;
     };
     let item = ordered.remove(from);
-    // After removal, `to` still matches JS arrayMove(from, to) insert index.
     ordered.insert(to, item);
     ordered
 }
 
-/// Resolve drop target from pointer Y against the **original** list geometry.
-///
-/// Must not use the preview-reordered layout — that creates a feedback loop where
-/// moving the hole shifts centers, which flips `over` back and forth (rapid flicker).
+/// Resolve drop target from pointer Y against the **original** list geometry + scroll.
 fn update_drop_target_from_pointer(
     app: &mut MemoryCleanerApp,
     e: &DragMoveEvent<DragClipboardItem>,
@@ -197,15 +244,23 @@ fn update_drop_target_from_pointer(
         return;
     }
 
-    let row = ITEM_HEIGHT + ITEM_GAP;
-    let y = f32::from(e.event.position.y - e.bounds.origin.y);
+    let row = ROW_HEIGHT;
+    let scroll_y = f32::from(
+        app.clipboard_list_scroll
+            .0
+            .borrow()
+            .base_handle
+            .offset()
+            .y,
+    );
+    // offset.y is ≤ 0 when scrolled down; convert viewport Y → content Y.
+    let y = f32::from(e.event.position.y - e.bounds.origin.y) - scroll_y;
     let mut best_idx = if y <= 0. {
         0
     } else {
         ((y / row) as usize).min(n - 1)
     };
 
-    // Hysteresis: keep current over until the pointer clearly enters another row.
     if let Some(current_id) = app.clipboard_drop_target_id
         && let Some(current_idx) = items.iter().position(|item| item.id == current_id)
         && current_idx != best_idx

@@ -6,8 +6,9 @@
 use std::sync::atomic::{AtomicIsize, Ordering};
 
 use windows::Win32::Foundation::HWND;
+use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowThreadProcessId, IsWindow, SetForegroundWindow,
+    BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsWindow, SetForegroundWindow,
 };
 
 static PREV_FOREGROUND_HWND: AtomicIsize = AtomicIsize::new(0);
@@ -50,38 +51,62 @@ pub fn save_current_focus() {
     PREV_FOREGROUND_HWND.store(val, Ordering::Relaxed);
 }
 
+/// After we hide ourselves, remember whoever Windows activated (fallback target).
+pub fn capture_foreground_after_hide() {
+    let hwnd = unsafe { GetForegroundWindow() };
+    let val = hwnd.0 as isize;
+    let our = OUR_HWND.load(Ordering::Relaxed);
+    if val != 0 && val != our {
+        PREV_FOREGROUND_HWND.store(val, Ordering::Relaxed);
+    }
+}
+
+/// Force a window to the foreground (AttachThreadInput unlocks SetForegroundWindow).
+pub fn force_foreground(hwnd: HWND) -> bool {
+    unsafe {
+        if !IsWindow(Some(hwnd)).as_bool() {
+            return false;
+        }
+        let fg = GetForegroundWindow();
+        let cur = GetCurrentThreadId();
+        let fg_tid = GetWindowThreadProcessId(fg, None);
+        let target_tid = GetWindowThreadProcessId(hwnd, None);
+
+        if fg_tid != 0 && fg_tid != cur {
+            let _ = AttachThreadInput(cur, fg_tid, true);
+        }
+        if target_tid != 0 && target_tid != cur && target_tid != fg_tid {
+            let _ = AttachThreadInput(cur, target_tid, true);
+        }
+
+        let _ = BringWindowToTop(hwnd);
+        let ok = SetForegroundWindow(hwnd).as_bool();
+
+        if fg_tid != 0 && fg_tid != cur {
+            let _ = AttachThreadInput(cur, fg_tid, false);
+        }
+        if target_tid != 0 && target_tid != cur && target_tid != fg_tid {
+            let _ = AttachThreadInput(cur, target_tid, false);
+        }
+        ok
+    }
+}
+
 /// Restore the previously saved foreground window (best effort).
 pub fn restore_previous_foreground() -> bool {
-    focus_hwnd(PREV_FOREGROUND_HWND.load(Ordering::Relaxed), "previous")
+    let prev = PREV_FOREGROUND_HWND.load(Ordering::Relaxed);
+    if prev == 0 {
+        crate::log_msg("[focus] no previous foreground hwnd saved");
+        return false;
+    }
+    force_foreground(HWND(prev as *mut _))
 }
 
 /// Bring our main window back to the foreground after paste.
 pub fn restore_our_foreground() -> bool {
-    focus_hwnd(OUR_HWND.load(Ordering::Relaxed), "ours")
-}
-
-fn focus_hwnd(raw: isize, label: &str) -> bool {
-    if raw == 0 {
-        crate::log_msg(&format!("[focus] no {label} hwnd saved"));
-        return false;
-    }
-    let hwnd = HWND(raw as *mut _);
-    unsafe {
-        if !IsWindow(Some(hwnd)).as_bool() {
-            crate::log_msg(&format!("[focus] {label} hwnd {raw:#x} invalid"));
-            return false;
-        }
-        let current = GetForegroundWindow();
-        if current.0 as isize == raw {
-            return true;
-        }
-        // Nudge the input queue so SetForegroundWindow is more likely to succeed.
-        let _ = GetWindowThreadProcessId(hwnd, None);
-        let ok = SetForegroundWindow(hwnd).as_bool();
-        if !ok {
-            crate::log_msg(&format!("[focus] SetForegroundWindow({label} {raw:#x}) failed"));
-        }
-        ok
+    match our_hwnd() {
+        Some(hwnd) => force_foreground(hwnd),
+        None => false,
     }
 }
 
