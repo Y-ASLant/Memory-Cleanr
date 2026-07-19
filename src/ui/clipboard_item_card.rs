@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::{
@@ -47,8 +49,6 @@ impl Render for DragPreviewCard {
             .border_1()
             .border_color(theme.primary)
             .rounded_md()
-            .shadow_lg()
-            .opacity(0.94)
             .child(
                 div()
                     .w(px(20.))
@@ -70,6 +70,20 @@ impl Render for DragPreviewCard {
                         cx,
                     )),
             )
+            .with_animation(
+                "clipboard-drag-ghost",
+                Animation::new(Duration::from_millis(140)).with_easing(ease_out_quint()),
+                |this, delta| {
+                    let shadow = vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.14 * delta),
+                        offset: point(px(0.), px(2. + 6. * delta)),
+                        blur_radius: px(6. + 12. * delta),
+                        spread_radius: px(0.),
+                        inset: false,
+                    }];
+                    this.opacity(0.55 + 0.4 * delta).shadow(shadow)
+                },
+            )
     }
 }
 
@@ -84,13 +98,22 @@ pub fn render_clipboard_item(
     let theme = cx.theme();
     let is_dragging = app.clipboard_dragging_id == Some(item.id);
 
-    // ElegantClipboard: source stays in the list at opacity 0 (layout hole follows via arrayMove).
+    // Soft insertion hole (follows via arrayMove). Fade in so the gap doesn't pop in.
     if is_dragging {
+        let theme = cx.theme();
         return div()
             .id(("clipboard-item-slot", item.id as u32))
             .w_full()
             .h(px(ITEM_HEIGHT))
-            .opacity(0.)
+            .rounded_md()
+            .border_1()
+            .border_color(theme.primary.opacity(0.35))
+            .bg(theme.primary.opacity(0.07))
+            .with_animation(
+                ("clipboard-drop-slot", item.id as u32),
+                Animation::new(Duration::from_millis(120)).with_easing(ease_out_quint()),
+                |this, delta| this.opacity(0.35 + 0.65 * delta),
+            )
             .into_any_element();
     }
 

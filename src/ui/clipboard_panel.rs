@@ -1,10 +1,7 @@
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Icon, IconName, Sizable, Size,
-    button::Button,
-    h_flex, label::Label,
-    scroll::ScrollableElement as _,
-    v_flex,
+    ActiveTheme, button::Button, h_flex, label::Label, scroll::ScrollableElement as _, v_flex,
 };
 
 use crate::app::MemoryCleanerApp;
@@ -15,8 +12,6 @@ use crate::ui::clipboard_item_card::{
 
 /// Clipboard-only window height (width matches the main 520px window).
 pub const CLIPBOARD_WINDOW_HEIGHT: f32 = 600.;
-/// Search bar height.
-const SEARCH_BAR_H: f32 = 36.;
 /// Filter bar height.
 const FILTER_BAR_H: f32 = 34.;
 /// Status bar height.
@@ -35,6 +30,7 @@ pub fn render_clipboard_panel(
     let items = &app.clipboard_items;
     let total = items.len();
     let active_filter = app.clipboard_filter;
+    let is_dragging = app.clipboard_dragging_id.is_some();
     // Keep source list order; only preview-move the dragged id to `over` (dnd-kit arrayMove).
     let display_items = preview_ordered_items(
         items,
@@ -48,25 +44,6 @@ pub fn render_clipboard_panel(
         .min_h_0()
         .w_full()
         .h_full()
-        .child(
-            h_flex()
-                .w_full()
-                .h(px(SEARCH_BAR_H))
-                .flex_shrink_0()
-                .px_3()
-                .items_center()
-                .gap_2()
-                .child(
-                    Icon::new(IconName::Search)
-                        .with_size(Size::Small)
-                        .text_color(muted),
-                )
-                .child(
-                    Label::new("搜索剪贴板…".to_string())
-                        .text_sm()
-                        .text_color(muted),
-                ),
-        )
         .child(
             h_flex()
                 .w_full()
@@ -120,8 +97,6 @@ pub fn render_clipboard_panel(
                     )
                     .into_any_element()
             } else {
-                // List-level drag tracking (closest-center by Y), so the gap follows the pointer
-                // even when the drag ghost sits under the cursor.
                 v_flex()
                     .id("clipboard-item-list")
                     .flex_1()
@@ -147,9 +122,12 @@ pub fn render_clipboard_panel(
                     }))
                     .children(display_items.into_iter().enumerate().map(|(idx, item)| {
                         let selected = app.clipboard_selected == Some(idx);
+                        let dimmed =
+                            is_dragging && app.clipboard_dragging_id != Some(item.id);
                         div()
                             .w_full()
                             .mb_1()
+                            .when(dimmed, |el| el.opacity(0.88))
                             .child(render_clipboard_item(item, idx, selected, app, cx))
                             .into_any_element()
                     }))

@@ -160,8 +160,6 @@ pub struct MemoryCleanerApp {
     pub clipboard_visible: bool,
     /// Cached clipboard items for the panel.
     pub clipboard_items: Vec<crate::clipboard::ClipboardItem>,
-    /// Current clipboard search query.
-    pub clipboard_search: String,
     /// Filter clipboard list by content type (`None` = all).
     pub clipboard_filter: Option<crate::clipboard::ContentType>,
     /// Selected index in clipboard list (for keyboard nav).
@@ -236,7 +234,6 @@ impl MemoryCleanerApp {
             clipboard_monitor: None,
             clipboard_visible: false,
             clipboard_items: Vec::new(),
-            clipboard_search: String::new(),
             clipboard_filter: None,
             clipboard_selected: None,
             clipboard_drop_target_id: None,
@@ -1087,12 +1084,7 @@ impl MemoryCleanerApp {
 
     pub fn refresh_clipboard_items(&mut self) {
         if let Some(storage) = &self.clipboard_storage {
-            let search = if self.clipboard_search.is_empty() {
-                None
-            } else {
-                Some(self.clipboard_search.as_str())
-            };
-            match storage.query(self.clipboard_filter, search, 200, 0) {
+            match storage.query(self.clipboard_filter, None, 200, 0) {
                 Ok(items) => self.clipboard_items = items,
                 Err(e) => {
                     crate::log_msg(&format!("[clipboard] query failed: {e:#}"));
