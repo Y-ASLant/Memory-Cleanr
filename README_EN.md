@@ -102,10 +102,12 @@ Buttons, GroupBox cards, switches, checkboxes, dialogs, settings panels, etc. al
 | Standby List | Clear standby list | Yes |
 | Standby List (Low Priority) | Clear low-priority standby list | Yes |
 | Merged Pages | Release merged pages | Yes |
-| Modified Files | Flush modified file cache for each fixed disk | Yes |
+| Modified Files | Flush file system cache for all volumes via Mount Manager | Yes |
 | Registry Cache | Flush registry cache | No |
 
 > "Standby List" and "Standby List (Low Priority)" are mutually exclusive — selecting one automatically deselects the other.
+>
+> **Disk impact:** Of the 8 cleanup regions, only "Modified Files", "Modified Pages", and "Registry Cache" involve disk writes; the remaining 5 (Working Set, System File Cache, Standby List, Standby List Low Priority, Merged Pages) are pure RAM operations. See FAQ below.
 
 Default enabled regions: Working Set, System File Cache, Modified Pages, Standby List, Merged Pages, Modified Files (bitmask `111`).
 
@@ -198,6 +200,19 @@ Check whether the hotkey is enabled in the Window Behavior dialog, and whether t
 
 - **Always available:** Diagnostic output goes to `OutputDebugString`, viewable with [DebugView](https://learn.microsoft.com/en-us/sysinternals/downloads/debugview) (Release builds have no console window).
 - **Debug logging:** Enable "Debug Logging" in the title bar gear menu; detailed runtime info is written to `App.log` in the application directory (same directory as `MemoryCleaner.exe`). Each line is formatted as `[unix_secs.millis] message`; entries with timestamps older than 7 days are automatically purged on write.
+
+**Which cleanup operations affect disk lifespan?**
+
+The 8 cleanup regions fall into two categories by disk behavior:
+
+- **Pure RAM operations (no disk impact):** Working Set, System File Cache, Standby List, Standby List (Low Priority), Merged Pages. These only reclaim or discard cached pages in memory without any disk writes. Re-accessing files after cleanup triggers re-reads from disk, but reads do not consume SSD write endurance.
+
+- **Involve disk writes:**
+  - **Modified Files** — Flushes file system cache for all volumes via `NtFlushBuffersFile`; write volume depends on accumulated dirty data — highest impact
+  - **Modified Pages** — Writes dirty pages from memory back to their backing files via `FlushModifiedList`
+  - **Registry Cache** — Writes registry hives to disk via `RegFlushKey`; small data volume — lowest impact
+
+Occasional manual use is not a concern. For scheduled automatic cleanup, consider excluding "Modified Files" and "Modified Pages" to reduce disk writes.
 
 ## Links
 
