@@ -502,12 +502,29 @@ impl MemoryCleanerApp {
                 Ok(Err(e)) => crate::log_msg(&format!("[window] show_from_tray failed: {e:#}")),
                 Err(_) => crate::log_msg("[window] activate_window handle update failed"),
             }
-            self.window = None;
-            self.window_shown = false;
-            self.pause_memory_refresh();
-            self.pause_anim();
+            self.release_window_handle(cx, "activate_failed");
         }
         self.open_window(cx);
+    }
+
+    /// Destroy the GPUI window referenced by `self.window`, then clear tracking state.
+    /// Safe to call when no handle is held (still resets `window_shown` and pauses loops).
+    fn release_window_handle(&mut self, cx: &mut Context<Self>, source: &str) {
+        if let Some(handle) = self.window.take() {
+            match handle.update(cx, |_, window, _| window.remove_window()) {
+                Ok(()) => crate::log_msg(&format!("[window] release_window ok source={source}")),
+                Err(_) => {
+                    crate::log_msg(&format!("[window] release_window failed source={source}"))
+                }
+            }
+        } else {
+            crate::log_msg(&format!(
+                "[window] release_window no handle source={source}"
+            ));
+        }
+        self.window_shown = false;
+        self.pause_memory_refresh();
+        self.pause_anim();
     }
 
     /// Remove the GPUI window and drop our handle. `activate_window` recreates it via
@@ -538,20 +555,7 @@ impl MemoryCleanerApp {
     }
 
     pub fn hide_to_tray(&mut self, cx: &mut Context<Self>) {
-        if let Some(handle) = self.window {
-            match handle.update(cx, |_, window, _| window.remove_window()) {
-                Ok(()) => {
-                    crate::log_msg("[close] hide_to_tray destroy ok source=tray_menu");
-                }
-                Err(_) => crate::log_msg("[close] hide_to_tray handle update failed"),
-            }
-        } else {
-            crate::log_msg("[close] hide_to_tray no window handle");
-        }
-        self.window = None;
-        self.window_shown = false;
-        self.pause_memory_refresh();
-        self.pause_anim();
+        self.release_window_handle(cx, "tray_menu");
         self.sync_tray();
     }
 
