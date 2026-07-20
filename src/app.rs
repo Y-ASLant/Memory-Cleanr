@@ -49,11 +49,9 @@ impl AnimatedValue {
     fn tick(&mut self) -> bool {
         let diff = self.target - self.current;
         if diff.abs() < ANIM_SNAP_EPSILON {
-            if self.current != self.target {
-                self.current = self.target;
-                return true;
-            }
-            return false;
+            let moved = self.current != self.target;
+            self.current = self.target;
+            return moved;
         }
         self.current += diff * (1.0 - (-ANIM_SPEED * ANIM_INTERVAL.as_secs_f64()).exp()) as f32;
         true
@@ -184,10 +182,13 @@ pub struct MemoryCleanerApp {
     window_shown: bool,
     pub cleanup_hotkey_recording: bool,
     pub(crate) hotkey_capture_focus: FocusHandle,
-    // Smooth animation state — set `.target`, read `.current` in render.
     anim_physical: AnimatedValue,
     anim_virtual: AnimatedValue,
     anim_optimize: AnimatedValue,
+    anim_used_phys: AnimatedValue,
+    anim_avail_phys: AnimatedValue,
+    anim_used_virt: AnimatedValue,
+    anim_avail_virt: AnimatedValue,
     anim_dirty: bool,
 }
 
@@ -221,8 +222,11 @@ impl MemoryCleanerApp {
         });
 
         let phys_percent = physical.used_percent;
+        let phys_used = physical.used as f32;
+        let phys_avail = physical.avail as f32;
         let virt_percent = virtual_mem.as_ref().map_or(0.0, |v| v.used_percent);
-
+        let virt_used = virtual_mem.as_ref().map_or(0.0, |v| v.used as f32);
+        let virt_avail = virtual_mem.as_ref().map_or(0.0, |v| v.avail as f32);
         let mut app = Self {
             window: None,
             settings,
@@ -245,6 +249,10 @@ impl MemoryCleanerApp {
             anim_physical: AnimatedValue::new(phys_percent),
             anim_virtual: AnimatedValue::new(virt_percent),
             anim_optimize: AnimatedValue::new(0.0),
+            anim_used_phys: AnimatedValue::new(phys_used),
+            anim_avail_phys: AnimatedValue::new(phys_avail),
+            anim_used_virt: AnimatedValue::new(virt_used),
+            anim_avail_virt: AnimatedValue::new(virt_avail),
             anim_dirty: false,
         };
 
@@ -401,6 +409,10 @@ impl MemoryCleanerApp {
             self.set_unavailable_sections(show_virtual);
             self.anim_physical.target = 0.0;
             self.anim_virtual.target = 0.0;
+            self.anim_used_phys.target = 0.0;
+            self.anim_avail_phys.target = 0.0;
+            self.anim_used_virt.target = 0.0;
+            self.anim_avail_virt.target = 0.0;
             self.anim_dirty = true;
             return true;
         };
@@ -408,29 +420,45 @@ impl MemoryCleanerApp {
         let changed = self.physical != physical || self.virtual_mem != virtual_mem;
         if changed {
             let phys_percent = physical.used_percent;
+            let phys_used = physical.used as f32;
+            let phys_avail = physical.avail as f32;
             let virt_percent = virtual_mem.as_ref().map_or(0.0, |v| v.used_percent);
+            let virt_used = virtual_mem.as_ref().map_or(0.0, |v| v.used as f32);
+            let virt_avail = virtual_mem.as_ref().map_or(0.0, |v| v.avail as f32);
             self.physical = physical;
             self.virtual_mem = virtual_mem;
             self.anim_physical.target = phys_percent;
             self.anim_virtual.target = virt_percent;
+            self.anim_used_phys.target = phys_used;
+            self.anim_avail_phys.target = phys_avail;
+            self.anim_used_virt.target = virt_used;
+            self.anim_avail_virt.target = virt_avail;
             self.anim_dirty = true;
         }
         changed
     }
 
-    /// Animated physical memory percentage (smoothed for rendering).
-    pub fn animated_physical_percent(&self) -> f32 {
-        self.anim_physical.current
+    pub fn animated_used_phys(&self) -> u64 {
+        self.anim_used_phys.current as u64
     }
-
-    /// Animated virtual memory percentage (smoothed for rendering).
-    pub fn animated_virtual_percent(&self) -> f32 {
-        self.anim_virtual.current
+    pub fn animated_avail_phys(&self) -> u64 {
+        self.anim_avail_phys.current as u64
     }
-
-    /// Animated optimize progress percentage (smoothed for rendering).
+    pub fn animated_used_virt(&self) -> u64 {
+        self.anim_used_virt.current as u64
+    }
+    pub fn animated_avail_virt(&self) -> u64 {
+        self.anim_avail_virt.current as u64
+    }
     pub fn animated_optimize_percent(&self) -> f32 {
         self.anim_optimize.current
+    }
+
+    /// Set optimize progress and kick the animation loop.
+    fn set_optimize_percent(&mut self, value: f32) {
+        self.optimize_percent = value;
+        self.anim_optimize.target = value;
+        self.anim_dirty = true;
     }
 
     pub fn activate_window(&mut self, cx: &mut Context<Self>) {
@@ -776,7 +804,11 @@ impl MemoryCleanerApp {
                     let a = app.anim_physical.tick();
                     let b = app.anim_virtual.tick();
                     let c = app.anim_optimize.tick();
-                    let still = a || b || c;
+                    let d = app.anim_used_phys.tick();
+                    let e = app.anim_avail_phys.tick();
+                    let f = app.anim_used_virt.tick();
+                    let g = app.anim_avail_virt.tick();
+                    let still = a | b | c | d | e | f | g;
                     app.anim_dirty = still;
                     if still {
                         cx.notify();
@@ -811,9 +843,7 @@ impl MemoryCleanerApp {
 
         let _ = this.update(cx, |app, cx| {
             app.optimize_step = t!("optimize.step", name = name.clone()).to_string();
-            app.optimize_percent = step_base * 100.0;
-            app.anim_optimize.target = app.optimize_percent;
-            app.anim_dirty = true;
+            app.set_optimize_percent(step_base * 100.0);
             cx.notify();
         });
 
@@ -826,9 +856,7 @@ impl MemoryCleanerApp {
         }
 
         let _ = this.update(cx, |app, cx| {
-            app.optimize_percent = (step_base + step_span) * 100.0;
-            app.anim_optimize.target = app.optimize_percent;
-            app.anim_dirty = true;
+            app.set_optimize_percent((step_base + step_span) * 100.0);
             cx.notify();
         });
 
@@ -854,9 +882,7 @@ impl MemoryCleanerApp {
             Ok(session) if session.is_empty() => {
                 let _ = this.update(cx, |app, cx| {
                     app.optimize_step = t!("optimize.step", name = name.clone()).to_string();
-                    app.optimize_percent = (step_base + step_span) * 100.0;
-                    app.anim_optimize.target = app.optimize_percent;
-                    app.anim_dirty = true;
+                    app.set_optimize_percent((step_base + step_span) * 100.0);
                     cx.notify();
                 });
                 return true;
@@ -868,9 +894,7 @@ impl MemoryCleanerApp {
                 ));
                 let _ = this.update(cx, |app, cx| {
                     app.optimize_step = t!("optimize.step", name = name.clone()).to_string();
-                    app.optimize_percent = (step_base + step_span) * 100.0;
-                    app.anim_optimize.target = app.optimize_percent;
-                    app.anim_dirty = true;
+                    app.set_optimize_percent((step_base + step_span) * 100.0);
                     cx.notify();
                 });
                 return false;
@@ -893,9 +917,7 @@ impl MemoryCleanerApp {
                     total = volume_total.to_string()
                 )
                 .to_string();
-                app.optimize_percent = (step_base + sub_base * step_span) * 100.0;
-                app.anim_optimize.target = app.optimize_percent;
-                app.anim_dirty = true;
+                app.set_optimize_percent((step_base + sub_base * step_span) * 100.0);
                 cx.notify();
             });
 
@@ -905,10 +927,9 @@ impl MemoryCleanerApp {
             report.record(&volume_label, flush_result);
 
             let _ = this.update(cx, |app, cx| {
-                app.optimize_percent =
-                    (step_base + (index + 1) as f32 / volume_total as f32 * step_span) * 100.0;
-                app.anim_optimize.target = app.optimize_percent;
-                app.anim_dirty = true;
+                app.set_optimize_percent(
+                    (step_base + (index + 1) as f32 / volume_total as f32 * step_span) * 100.0,
+                );
                 cx.notify();
             });
         }
@@ -937,9 +958,7 @@ impl MemoryCleanerApp {
         let notify = self.settings.show_optimization_notifications;
         self.is_optimizing = true;
         self.optimize_step = t!("button.cleanup_preparing").to_string();
-        self.optimize_percent = 0.0;
-        self.anim_optimize.target = 0.0;
-        self.anim_dirty = true;
+        self.set_optimize_percent(0.0);
         self.optimize_status.clear();
         self.optimize_has_errors = false;
         crate::tray::start_spin();
@@ -979,9 +998,8 @@ impl MemoryCleanerApp {
                     let freed_detail = format_freed_message(avail_before, avail_after);
                     app.optimize_step.clear();
                     app.is_optimizing = false;
-                    app.optimize_percent = 0.0;
+                    app.set_optimize_percent(0.0);
                     app.anim_optimize.current = 0.0;
-                    app.anim_optimize.target = 0.0;
                     crate::tray::stop_spin();
                     let completed_refs: Vec<&str> = completed.iter().map(|s| s.as_str()).collect();
                     let errors_refs: Vec<&str> = errors.iter().map(|s| s.as_str()).collect();
@@ -1119,6 +1137,8 @@ impl Render for MemoryCleanerApp {
                     "physical-memory",
                     true,
                     self.anim_physical.current,
+                    self.animated_used_phys(),
+                    self.animated_avail_phys(),
                     cx,
                 )),
         );
@@ -1137,6 +1157,8 @@ impl Render for MemoryCleanerApp {
                         "virtual-memory",
                         false,
                         self.anim_virtual.current,
+                        self.animated_used_virt(),
+                        self.animated_avail_virt(),
                         cx,
                     )),
             );

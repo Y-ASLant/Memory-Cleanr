@@ -1,3 +1,4 @@
+use crate::memory::{MemorySection, MemoryStatus};
 use rust_i18n::t;
 
 use gpui::*;
@@ -5,8 +6,6 @@ use gpui_component::{
     ActiveTheme, Icon, IconName, Sizable, Size, h_flex, label::Label, progress::ProgressCircle,
     v_flex,
 };
-
-use crate::memory::MemorySection;
 
 pub const MEMORY_RING_SIZE: f32 = 108.;
 
@@ -67,6 +66,8 @@ pub fn render_memory_card(
     id: &'static str,
     is_physical: bool,
     animated_percent: f32,
+    animated_used: u64,
+    animated_avail: u64,
     cx: &App,
 ) -> impl IntoElement {
     let unavailable = section.is_unavailable();
@@ -81,7 +82,12 @@ pub fn render_memory_card(
     let summary = if unavailable {
         t!("memory.unavailable").to_string()
     } else {
-        section.usage_summary()
+        t!(
+            "memory.used_avail",
+            used = MemoryStatus::format_bytes(animated_used),
+            avail = MemoryStatus::format_bytes(animated_avail),
+        )
+        .to_string()
     };
     let muted = cx.theme().foreground.opacity(0.82);
 
