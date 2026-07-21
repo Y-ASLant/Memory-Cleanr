@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="App.png" alt="Memory Cleanr" width="128" />
+  <img src="App.png" alt="Memory Cleaner" width="128" />
 </p>
 
-# Memory Cleanr
+# Memory Cleaner
 
 A Windows memory optimization tool built with Rust + GPUI. Real-time memory monitoring, configurable cleanup regions, system tray resident, global hotkey, and one-click optimization.
 
@@ -45,7 +45,7 @@ make build
 cargo build --release
 ```
 
-Build artifact: `target/release/MemoryCleanr.exe`
+Build artifact: `target/release/MemoryCleaner.exe`
 
 ### Run
 
@@ -102,12 +102,14 @@ Buttons, GroupBox cards, switches, checkboxes, dialogs, settings panels, etc. al
 | Standby List | Clear standby list | Yes |
 | Standby List (Low Priority) | Clear low-priority standby list | Yes |
 | Merged Pages | Release merged pages | Yes |
-| Modified Files | Flush modified file cache for each fixed disk | Yes |
+| Modified Files | Flush file system cache for all volumes via Mount Manager | Yes |
 | Registry Cache | Flush registry cache | No |
 
 > "Standby List" and "Standby List (Low Priority)" are mutually exclusive — selecting one automatically deselects the other.
+>
+> **Disk impact:** Of the 8 cleanup regions, only "Modified Files", "Modified Pages", and "Registry Cache" involve disk writes; the remaining 5 (Working Set, System File Cache, Standby List, Standby List Low Priority, Merged Pages) are pure RAM operations. See FAQ below.
 
-Default enabled regions: Working Set, System File Cache, Modified Pages, Standby List, Merged Pages, Modified Files (bitmask `111`).
+Default enabled regions: Working Set, System File Cache, Standby List, Merged Pages (bitmask `42`). Modified Pages, Modified Files, and Registry Cache are disabled by default as they involve disk writes.
 
 ## Configuration
 
@@ -117,19 +119,12 @@ Config file: `%APPDATA%\MemoryCleaner\settings.toml`
 |---------|------|---------|-------------|
 | `always_on_top` | bool | `false` | Window always on top |
 | `close_to_notification_area` | bool | `true` | Hide to tray on close instead of exiting |
-| `show_virtual_memory` | bool | `true` | Show virtual memory card (config file only, no UI toggle yet) |
-| `memory_areas` | u32 | `111` | Cleanup region bitmask (sum of `MemoryAreas` flag bits) |
+| `memory_areas` | u32 | `42` | Cleanup region bitmask (sum of `MemoryAreas` flag bits) |
 | `language` | string | `"auto"` | Interface language: `auto` (follow system), `zh-CN`, `en` |
 | `debug_logging` | bool | `false` | Write detailed runtime info to `App.log` in the application directory |
 | `show_optimization_notifications` | bool | `true` | Show Windows Toast on cleanup start/completion |
 | `cleanup_hotkey_enabled` | bool | `true` | Enable global cleanup hotkey |
 | `cleanup_hotkey` | string | `"Ctrl+Alt+C"` | Hotkey combo (`Ctrl`/`Alt`/`Shift`/`Win` + letter or digit) |
-| `tray_icon_show_memory_usage` | bool | `false` | **Reserved** (unused) |
-| `tray_icon_use_transparent_background` | bool | `false` | **Reserved** |
-| `tray_icon_warning_level` | u8 | `80` | **Reserved** |
-| `tray_icon_danger_level` | u8 | `90` | **Reserved** |
-| `auto_optimization_interval` | u32 | `0` | **Reserved**: scheduled auto-cleanup interval (seconds, 0 = disabled) |
-| `auto_optimization_memory_usage` | u32 | `0` | **Reserved**: memory usage threshold trigger (%, 0 = disabled) |
 
 ## Tech Stack
 
@@ -197,7 +192,20 @@ Check whether the hotkey is enabled in the Window Behavior dialog, and whether t
 **How do I view logs?**
 
 - **Always available:** Diagnostic output goes to `OutputDebugString`, viewable with [DebugView](https://learn.microsoft.com/en-us/sysinternals/downloads/debugview) (Release builds have no console window).
-- **Debug logging:** Enable "Debug Logging" in the title bar gear menu; detailed runtime info is written to `App.log` in the application directory (same directory as `MemoryCleanr.exe`). Each line is formatted as `[unix_secs.millis] message`; entries with timestamps older than 7 days are automatically purged on write.
+- **Debug logging:** Enable "Debug Logging" in the title bar gear menu; detailed runtime info is written to `App.log` in the application directory (same directory as `MemoryCleaner.exe`). Each line is formatted as `[unix_secs.millis] message`; entries with timestamps older than 7 days are automatically purged on write.
+
+**Which cleanup operations affect disk lifespan?**
+
+The 8 cleanup regions fall into two categories by disk behavior:
+
+- **Pure RAM operations (no disk impact):** Working Set, System File Cache, Standby List, Standby List (Low Priority), Merged Pages. These only reclaim or discard cached pages in memory without any disk writes. Re-accessing files after cleanup triggers re-reads from disk, but reads do not consume SSD write endurance.
+
+- **Involve disk writes:**
+  - **Modified Files** — Flushes file system cache for all volumes via `NtFlushBuffersFile`; write volume depends on accumulated dirty data — highest impact
+  - **Modified Pages** — Writes dirty pages from memory back to their backing files via `FlushModifiedList`
+  - **Registry Cache** — Writes registry hives to disk via `RegFlushKey`; small data volume — lowest impact
+
+Occasional manual use is not a concern. If you clean frequently, consider excluding "Modified Files" and "Modified Pages" to reduce disk writes.
 
 ## Links
 

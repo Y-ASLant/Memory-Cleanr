@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="App.png" alt="Memory Cleanr" width="128" />
+  <img src="App.png" alt="Memory Cleaner" width="128" />
 </p>
 
-# Memory Cleanr
+# Memory Cleaner
 
 Windows 内存清理工具，基于 Rust + GPUI 构建。提供实时内存监控、可配置的清理区域、系统托盘常驻、全局快捷键，以及一键优化。
 
@@ -45,7 +45,7 @@ make build
 cargo build --release
 ```
 
-构建产物：`target/release/MemoryCleanr.exe`
+构建产物：`target/release/MemoryCleaner.exe`
 
 ### 运行
 
@@ -102,12 +102,14 @@ cargo run --release
 | 待机列表 | 清空备用列表 | 是 |
 | 待机列表（低优先级） | 清空低优先级备用列表 | 是 |
 | 合并页面 | 释放合并页面 | 是 |
-| 已修改文件 | 清理各固定磁盘的已修改文件缓存 | 是 |
+| 已修改文件 | 通过 Mount Manager 枚举卷并刷写文件系统缓存 | 是 |
 | 注册表缓存 | 刷写注册表缓存 | 否 |
 
 > 「待机列表」与「待机列表（低优先级）」只能二选一，勾选其一会自动取消另一项。
+>
+> **磁盘影响：** 8 个清理区域中，仅「已修改文件」「已修改页面」「注册表缓存」涉及磁盘写入；其余 5 项（工作集、系统文件缓存、待机列表、待机列表低优先级、合并页面）均为纯 RAM 操作，不写磁盘。详见下方 FAQ。
 
-默认启用的区域：工作集、系统文件缓存、已修改页面、待机列表、合并页面、已修改文件（位掩码 `111`）。
+默认启用的区域：工作集、系统文件缓存、待机列表、合并页面（位掩码 `42`）。已修改页面、已修改文件和注册表缓存因涉及磁盘写入，默认不启用。
 
 ## 配置项
 
@@ -117,19 +119,12 @@ cargo run --release
 |--------|------|--------|------|
 | `always_on_top` | bool | `false` | 窗口始终置顶 |
 | `close_to_notification_area` | bool | `true` | 点击关闭时隐藏到托盘而非退出 |
-| `show_virtual_memory` | bool | `true` | 显示虚拟内存卡片（仅配置文件，暂无 UI 开关） |
-| `memory_areas` | u32 | `111` | 清理区域位掩码（各 `MemoryAreas` 标志位之和） |
+| `memory_areas` | u32 | `42` | 清理区域位掩码（各 `MemoryAreas` 标志位之和） |
 | `language` | string | `"auto"` | 界面语言：`auto`（跟随系统）、`zh-CN`、`en` |
 | `debug_logging` | bool | `false` | 将详细运行信息写入程序目录下的 `App.log` |
 | `show_optimization_notifications` | bool | `true` | 清理开始/完成时弹出 Windows Toast |
 | `cleanup_hotkey_enabled` | bool | `true` | 启用全局清理热键 |
 | `cleanup_hotkey` | string | `"Ctrl+Alt+C"` | 热键组合（`Ctrl`/`Alt`/`Shift`/`Win` + 字母或数字） |
-| `tray_icon_show_memory_usage` | bool | `false` | **预留**（未使用） |
-| `tray_icon_use_transparent_background` | bool | `false` | **预留** |
-| `tray_icon_warning_level` | u8 | `80` | **预留** |
-| `tray_icon_danger_level` | u8 | `90` | **预留** |
-| `auto_optimization_interval` | u32 | `0` | **预留**：定时自动清理间隔（秒，0 = 禁用） |
-| `auto_optimization_memory_usage` | u32 | `0` | **预留**：内存占用阈值触发清理（%，0 = 禁用） |
 
 ## 技术栈
 
@@ -197,7 +192,20 @@ Windows 会按需将常用页面重新加载到内存。清理后短期内可能
 **如何查看日志？**
 
 - **始终可用：** 诊断信息通过 `OutputDebugString` 输出，可用 [DebugView](https://learn.microsoft.com/en-us/sysinternals/downloads/debugview) 查看（Release 构建无控制台窗口）。
-- **调试日志：** 在标题栏齿轮菜单中开启「调试日志」后，详细运行信息写入程序目录下的 `App.log`（与 `MemoryCleanr.exe` 同目录）。每行格式为 `[unix_secs.millis] 消息`；写入新日志时会自动删除时间戳早于 7 天的旧行。
+- **调试日志：** 在标题栏齿轮菜单中开启「调试日志」后，详细运行信息写入程序目录下的 `App.log`（与 `MemoryCleaner.exe` 同目录）。每行格式为 `[unix_secs.millis] 消息`；写入新日志时会自动删除时间戳早于 7 天的旧行。
+
+**哪些清理操作会影响磁盘寿命？**
+
+8 个清理区域按磁盘行为分为两类：
+
+- **纯 RAM 操作（不影响磁盘）：** 工作集、系统文件缓存、待机列表、待机列表（低优先级）、合并页面。这些操作仅回收或丢弃内存中的缓存页面，不产生任何磁盘写入。清理后再次访问文件时会从磁盘重新读取，但读取不会消耗 SSD 写入寿命。
+
+- **涉及磁盘写入：**
+  - **已修改文件** — 通过 `NtFlushBuffersFile` 刷写所有卷的文件系统缓存到磁盘，写入量取决于积压的脏数据量，影响最大
+  - **已修改页面** — 通过 `FlushModifiedList` 将内存中的脏页写回对应文件
+  - **注册表缓存** — 通过 `RegFlushKey` 写入注册表配置单元，数据量小，影响最小
+
+日常手动使用无须担心；若频繁清理，建议避开「已修改文件」和「已修改页面」以减少磁盘写入。
 
 ## 友链
 

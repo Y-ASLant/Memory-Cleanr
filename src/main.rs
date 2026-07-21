@@ -2,7 +2,7 @@
 
 use gpui::{actions, *};
 
-use memory_cleanr::{
+use memory_cleaner::{
     app::{self, AppEntityHolder},
     locale, log_msg,
     settings::Settings,
@@ -112,9 +112,9 @@ fn main() {
     let (command_tx, command_rx) = std::sync::mpsc::channel();
     win32::hotkey::bind_command_sender(command_tx.clone());
 
-    Tray::install(command_tx.clone()).unwrap_or_else(|e| {
-        log_msg(&format!("Failed to install tray icon: {e}"));
-    });
+    if let Err(e) = Tray::install(command_tx.clone()) {
+        log_msg(&format!("[tray] install failed: {e:#}"));
+    }
     win32::hotkey::sync(&settings);
 
     // Clipboard Win+V hotkey: disable system Win+V and register our own

@@ -3584,8 +3584,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "memory-cleanr"
-version = "1.0.1"
+name = "memory-cleaner"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "bitflags 2.13.0",

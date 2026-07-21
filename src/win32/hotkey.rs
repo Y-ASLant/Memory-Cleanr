@@ -416,7 +416,7 @@ unsafe fn register_hotkey_window_class() -> Result<()> {
     }
 
     let instance = unsafe { GetModuleHandleW(None).context("GetModuleHandleW failed")? };
-    let class_name = windows::core::w!("MemoryCleanrHotkey");
+    let class_name = windows::core::w!("MemoryCleanerHotkey");
 
     let wnd_class = WNDCLASSW {
         lpfnWndProc: Some(hotkey_wnd_proc),
@@ -436,12 +436,12 @@ unsafe fn register_hotkey_window_class() -> Result<()> {
 
 unsafe fn create_message_window() -> Result<HWND> {
     let instance = unsafe { GetModuleHandleW(None).context("GetModuleHandleW failed")? };
-    let class_name = windows::core::w!("MemoryCleanrHotkey");
+    let class_name = windows::core::w!("MemoryCleanerHotkey");
     let hwnd = unsafe {
         CreateWindowExW(
             WINDOW_EX_STYLE::default(),
             class_name,
-            windows::core::w!("MemoryCleanrHotkey"),
+            windows::core::w!("MemoryCleanerHotkey"),
             WINDOW_STYLE(0),
             0,
             0,

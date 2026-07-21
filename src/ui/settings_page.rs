@@ -842,7 +842,7 @@ fn render_cleanup_button_content(
                 ProgressCircle::new("inline-optimize-progress")
                     .color(color)
                     .small()
-                    .value(app.optimize_percent),
+                    .value(app.animated_optimize_percent()),
             )
             .child(
                 Label::new(line)

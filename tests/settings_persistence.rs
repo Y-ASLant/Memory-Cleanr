@@ -1,5 +1,5 @@
-use memory_cleanr::optimize::MemoryAreas;
-use memory_cleanr::settings::Settings;
+use memory_cleaner::optimize::MemoryAreas;
+use memory_cleaner::settings::Settings;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -39,7 +39,6 @@ fn settings_save_and_load_roundtrip_in_temp_config_dir() {
         let settings = Settings {
             always_on_top: true,
             close_to_notification_area: false,
-            show_virtual_memory: false,
             memory_areas: MemoryAreas::WORKING_SET.bits(),
             language: "zh-CN".into(),
             debug_logging: true,
@@ -51,7 +50,6 @@ fn settings_save_and_load_roundtrip_in_temp_config_dir() {
         let loaded = Settings::load();
         assert_eq!(loaded.always_on_top, true);
         assert_eq!(loaded.close_to_notification_area, false);
-        assert_eq!(loaded.show_virtual_memory, false);
         assert_eq!(loaded.memory_areas, MemoryAreas::WORKING_SET.bits());
         assert_eq!(loaded.language, "zh-CN");
         assert_eq!(loaded.debug_logging, true);

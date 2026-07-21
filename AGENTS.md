@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Memory Cleanr is a **Windows-only** GUI memory-optimization tool written in Rust with the **GPUI** framework (from the Zed editor). It frees physical and virtual memory by calling Windows NT memory-management APIs (`NtSetSystemInformation`, `SetSystemFileCacheSize`, etc.), runs as a system-tray resident app, and requires administrator privileges for most operations. Licensed MIT.
+Memory Cleaner is a **Windows-only** GUI memory-optimization tool written in Rust with the **GPUI** framework (from the Zed editor). It frees physical and virtual memory by calling Windows NT memory-management APIs (`NtSetSystemInformation`, `SetSystemFileCacheSize`, etc.), runs as a system-tray resident app, and requires administrator privileges for most operations. Licensed MIT.
 
 ## Architecture & Data Flow
 
@@ -119,14 +119,7 @@ make clean # cargo clean
 - **Memory refresh:** `MEMORY_REFRESH_INTERVAL` = 1 s while main window is visible; paused when hidden to tray (`pause_memory_refresh` / `start_memory_refresh`).
 - **Platform chrome:** Win10 (build &lt; 22000) uses square corners via theme tokens; Win11 keeps gpui-component defaults.
 
-## Unimplemented Settings (Reserved)
-
-These fields exist in `settings.toml` for forward compatibility but have no runtime logic yet:
-
-- `auto_optimization_interval` / `auto_optimization_memory_usage` — scheduled or threshold-triggered auto cleanup
-- `tray_icon_*` — reserved tray icon settings (no runtime logic)
-
-Implemented since earlier docs (do **not** list as unimplemented):
+Implemented settings that must **not** be listed as unimplemented:
 
 - `show_optimization_notifications` — Windows Toast on optimize start/complete
 - `cleanup_hotkey_enabled` / `cleanup_hotkey` — global hotkey via `RegisterHotKey`
@@ -139,7 +132,7 @@ Implemented since earlier docs (do **not** list as unimplemented):
 - **What to include:** User-visible features, behavior changes, new/removed settings, dependency or build-profile changes, and noteworthy docs. Describe the **shipped outcome**, not the debugging journey.
 - **What to omit:** Separate “fix” bullets for issues discovered and resolved before release; RAII refactors, API path corrections, or review feedback that never shipped independently.
 - **Sections:** Chinese block uses `### 新增` / `### 变更` / `### 移除`; English block uses `### Added` / `### Changed` / `### Removed`. Mirror the same bullets in both blocks. Older releases may stay as one-line summaries pointing to git history.
-- **Version bump:** When preparing a release, update `Cargo.toml` `version`, add the `docs/CHANGELOG.md` section, and tag (e.g. `v1.0.2`). Compare link at file bottom uses `Y-ASLant/MemoryCleanr` on GitHub.
+- **Version bump:** When preparing a release, update `Cargo.toml` `version`, add the `docs/CHANGELOG.md` section, and tag (e.g. `v1.0.2`). Compare link at file bottom uses `Y-ASLant/MemoryCleaner` on GitHub.
 - **Technical docs:** Deeper implementation notes (e.g. API comparisons) live under `docs/` and are referenced from the changelog when relevant; they are not a substitute for the changelog entry.
 
 ## Tray Icon Spin During Cleanup
@@ -154,7 +147,7 @@ While `run_optimize` is in progress, `tray::start_spin()` posts `TrayCommand::Se
 - **Vendored patch:** `proc-macro-error2` 2.0.1 is vendored under `vendor/` to fix `E0365` on Rust 1.97+ (changes `extern crate proc_macro` to `pub extern crate proc_macro`). Remove when upstream releases a fix.
 - **Release profile:** Aggressive optimization — LTO enabled, symbols stripped, `opt-level = "s"` (size), single codegen unit, `panic = "abort"`.
 - **Package manager:** Cargo only. No npm, no other package managers.
-- **Binary name:** `MemoryCleanr.exe` (see `[[bin]]` name in `Cargo.toml`).
+- **Binary name:** `MemoryCleaner.exe` (see `[[bin]]` name in `Cargo.toml`).
 
 ## Testing & QA
 

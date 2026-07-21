@@ -39,7 +39,10 @@ pub enum TrayCommand {
     Optimize,
     MenuAction(String),
     /// Tray icon spin animation frame (0 = upright). Handled on the GPUI thread only.
-    SetSpinFrame(u32),
+    SetSpinFrame {
+        quarters: u32,
+        generation: u32,
+    },
     /// Win+V hotkey: show clipboard history panel.
     ShowClipboard,
 }
@@ -141,10 +144,13 @@ fn set_tray_icon_rotation(quarters: u32) {
 }
 
 pub fn stop_spin() {
-    SPIN_GENERATION.fetch_add(1, Ordering::Relaxed);
+    let generation = SPIN_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
     SPIN_ACTIVE.store(false, Ordering::Relaxed);
     if let Some(tx) = CMD_TX.get() {
-        let _ = tx.send(TrayCommand::SetSpinFrame(0));
+        let _ = tx.send(TrayCommand::SetSpinFrame {
+            quarters: 0,
+            generation,
+        });
     }
 }
 
@@ -165,7 +171,10 @@ pub fn start_spin() {
                 }
 
                 if let Some(tx) = CMD_TX.get() {
-                    let _ = tx.send(TrayCommand::SetSpinFrame(quarters));
+                    let _ = tx.send(TrayCommand::SetSpinFrame {
+                        quarters,
+                        generation,
+                    });
                 }
                 quarters = quarters.wrapping_add(1);
 
@@ -175,28 +184,19 @@ pub fn start_spin() {
         .ok();
 }
 
-pub fn format_memory_tooltip(
-    physical: &MemorySection,
-    virtual_mem: Option<&MemorySection>,
-) -> String {
+pub fn format_memory_tooltip(physical: &MemorySection, virtual_mem: &MemorySection) -> String {
     let mut lines = vec![t!("tray.tooltip", percent = physical.percent_label()).to_string()];
-    if let Some(virtual_mem) = virtual_mem {
-        lines.push(
-            t!(
-                "tray.tooltip_virtual",
-                percent = virtual_mem.percent_label()
-            )
-            .to_string(),
-        );
-    }
+    lines.push(
+        t!(
+            "tray.tooltip_virtual",
+            percent = virtual_mem.percent_label()
+        )
+        .to_string(),
+    );
     lines.join("\n")
 }
 
-pub fn sync_display(
-    physical: &MemorySection,
-    virtual_mem: Option<&MemorySection>,
-    window_visible: bool,
-) {
+pub fn sync_display(physical: &MemorySection, virtual_mem: &MemorySection, window_visible: bool) {
     let Some(tray) = tray() else {
         return;
     };
@@ -295,7 +295,13 @@ pub fn dispatch_command(
         }
         TrayCommand::Optimize => app.run_optimize(cx),
         TrayCommand::MenuAction(action) => app.handle_tray_action(&action, cx),
-        TrayCommand::SetSpinFrame(quarters) => {
+        TrayCommand::SetSpinFrame {
+            quarters,
+            generation,
+        } => {
+            if generation != SPIN_GENERATION.load(Ordering::Relaxed) {
+                return;
+            }
             if quarters == 0 || SPIN_ACTIVE.load(Ordering::Relaxed) {
                 set_tray_icon_rotation(quarters);
             }
@@ -330,38 +336,22 @@ mod tests {
     }
 
     #[test]
-    fn format_memory_tooltip_includes_virtual_memory_when_present_zh() {
+    fn format_memory_tooltip_includes_virtual_memory_zh() {
         with_locale("zh-CN", || {
             let physical = section("物理内存", 46.0);
             let virtual_mem = section("虚拟内存", 86.0);
-            let tooltip = format_memory_tooltip(&physical, Some(&virtual_mem));
+            let tooltip = format_memory_tooltip(&physical, &virtual_mem);
             assert_eq!(tooltip, "物理内存: 46%\n虚拟内存: 86%");
         });
     }
 
     #[test]
-    fn format_memory_tooltip_includes_virtual_memory_when_present_en() {
+    fn format_memory_tooltip_includes_virtual_memory_en() {
         with_locale("en", || {
             let physical = section("Physical Memory", 46.0);
             let virtual_mem = section("Virtual Memory", 86.0);
-            let tooltip = format_memory_tooltip(&physical, Some(&virtual_mem));
+            let tooltip = format_memory_tooltip(&physical, &virtual_mem);
             assert_eq!(tooltip, "Physical: 46%\nVirtual: 86%");
-        });
-    }
-
-    #[test]
-    fn format_memory_tooltip_omits_virtual_memory_when_absent_zh() {
-        with_locale("zh-CN", || {
-            let physical = section("物理内存", 46.0);
-            assert_eq!(format_memory_tooltip(&physical, None), "物理内存: 46%");
-        });
-    }
-
-    #[test]
-    fn format_memory_tooltip_omits_virtual_memory_when_absent_en() {
-        with_locale("en", || {
-            let physical = section("Physical Memory", 46.0);
-            assert_eq!(format_memory_tooltip(&physical, None), "Physical: 46%");
         });
     }
 

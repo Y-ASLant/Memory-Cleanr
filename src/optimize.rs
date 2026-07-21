@@ -30,10 +30,8 @@ bitflags::bitflags! {
 impl MemoryAreas {
     pub const DEFAULT: Self = Self::WORKING_SET
         .union(Self::SYSTEM_FILE_CACHE)
-        .union(Self::MODIFIED_PAGE_LIST)
         .union(Self::STANDBY_LIST)
-        .union(Self::COMBINED_PAGE_LIST)
-        .union(Self::MODIFIED_FILE_CACHE);
+        .union(Self::COMBINED_PAGE_LIST);
 
     /// Returns the i18n key for this memory area's display name.
     pub const fn label_key(self) -> &'static str {
