@@ -578,6 +578,7 @@ impl MemoryCleanerApp {
             ));
         }
         self.window_shown = false;
+        win32::focus::clear_our_hwnd();
         self.pause_memory_refresh();
         self.pause_anim();
     }
