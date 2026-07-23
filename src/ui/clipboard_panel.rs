@@ -451,25 +451,32 @@ fn start_clipboard_shift_ticker(
     .detach();
 }
 
-/// Mark tear-off when the drag pointer leaves the main window viewport.
+/// Enter tear-off when the pointer leaves the viewport; cancel when it returns.
 fn update_drag_tearoff(
     app: &mut MemoryCleanerApp,
     e: &DragMoveEvent<DragClipboardItem>,
     window: &mut Window,
     cx: &mut Context<MemoryCleanerApp>,
 ) {
-    if app.clipboard_drag_tearoff {
-        return;
-    }
     let pos = e.event.position;
     let size = window.viewport_size();
     let outside = pos.x < px(0.)
         || pos.y < px(0.)
         || pos.x >= size.width
         || pos.y >= size.height;
+
     if !outside {
+        if app.clipboard_drag_tearoff {
+            app.cancel_clipboard_tearoff(cx);
+            window.refresh();
+        }
         return;
     }
+
+    if app.clipboard_drag_tearoff {
+        return;
+    }
+
     app.clipboard_drag_tearoff = true;
     app.clipboard_drop_target_id = None;
     app.clipboard_shift_anims.clear();
@@ -540,9 +547,12 @@ pub fn start_clipboard_drag_tracker(app: &mut MemoryCleanerApp, cx: &mut Context
                             let _ = handle.update(cx, |_, window, _| window.refresh());
                         }
                         cx.notify();
-                    }
-
-                    if app.clipboard_drag_tearoff {
+                    } else if !outside && app.clipboard_drag_tearoff {
+                        app.cancel_clipboard_tearoff(cx);
+                        if let Some(handle) = app.window {
+                            let _ = handle.update(cx, |_, window, _| window.refresh());
+                        }
+                    } else if app.clipboard_drag_tearoff {
                         app.update_clipboard_tearoff_preview_position(cx);
                     }
 

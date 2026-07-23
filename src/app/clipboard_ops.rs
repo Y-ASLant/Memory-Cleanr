@@ -337,6 +337,20 @@ impl MemoryCleanerApp {
         }
     }
 
+    /// Pointer re-entered the main window — restore in-window drag ghost and reorder.
+    pub fn cancel_clipboard_tearoff(&mut self, cx: &mut gpui::Context<Self>) {
+        if !self.clipboard_drag_tearoff {
+            return;
+        }
+        self.clipboard_drag_tearoff = false;
+        self.close_clipboard_tearoff_preview(cx);
+        if let Some(dragging_id) = self.clipboard_dragging_id {
+            self.clipboard_drop_target_id = Some(dragging_id);
+            crate::ui::clipboard_panel::sync_clipboard_shift_anims(self, cx);
+        }
+        cx.notify();
+    }
+
     fn tearoff_preview_origin_for(&self, screen: Point<Pixels>, _cx: &gpui::App) -> Point<Pixels> {
         let offset = self.clipboard_drag_cursor_offset.unwrap_or_else(|| {
             point(px(DRAG_CARD_WIDTH / 2.), px(ITEM_HEIGHT / 2.))
