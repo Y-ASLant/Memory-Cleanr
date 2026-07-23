@@ -1,5 +1,16 @@
 //! Shared layout metrics for window sizing and spacing.
 
+/// Returns the DPI scale factor for the given window.
+/// 1.0 = 96 DPI (100%), 1.25 = 120 DPI (125%), 1.5 = 144 DPI (150%), etc.
+pub fn dpi_scale(window: &gpui::Window) -> f32 {
+    window.scale_factor()
+}
+
+/// Scale a logical pixel value by the window's DPI factor.
+pub fn scaled_px(window: &gpui::Window, logical: f32) -> f32 {
+    logical * dpi_scale(window)
+}
+
 pub const SECTION_GAP: f32 = 6.;
 pub const DIALOG_PADDING_TOP: f32 = 16.;
 pub const DIALOG_PADDING_HORIZONTAL: f32 = 16.;

@@ -22,11 +22,11 @@ static CMD_TX: OnceLock<Sender<TrayCommand>> = OnceLock::new();
 static SPIN_GENERATION: AtomicU32 = AtomicU32::new(0);
 static SPIN_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-#[allow(dead_code)]
 pub struct Tray {
     icon: TrayIcon,
     optimize: MenuItem,
     toggle_window: MenuItem,
+    #[allow(dead_code)]
     clipboard: MenuItem,
     quit: MenuItem,
 }
