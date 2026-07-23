@@ -12,8 +12,8 @@ use windows::Win32::System::DataExchange::{
 use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, MSG,
-    RegisterClassW, TranslateMessage, UnregisterClassW, WINDOW_STYLE, WM_CLIPBOARDUPDATE,
-    WM_CLOSE, WM_DESTROY, WNDCLASSW, WS_EX_NOACTIVATE,
+    RegisterClassW, TranslateMessage, UnregisterClassW, WINDOW_STYLE, WM_CLIPBOARDUPDATE, WM_CLOSE,
+    WM_DESTROY, WNDCLASSW, WS_EX_NOACTIVATE,
 };
 use windows::core::w;
 
@@ -258,7 +258,7 @@ fn read_utf16_from_ptr(ptr: *const u16) -> Option<String> {
         }
     }
     let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
-    String::from_utf16(slice).ok()
+    Some(String::from_utf16_lossy(slice))
 }
 #[cfg(test)]
 mod tests {

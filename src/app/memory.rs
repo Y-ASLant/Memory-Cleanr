@@ -23,7 +23,9 @@ impl MemoryCleanerApp {
         if self.window.is_none() {
             return;
         }
-        let generation = self.anim_generation.load(std::sync::atomic::Ordering::Relaxed);
+        let generation = self
+            .anim_generation
+            .load(std::sync::atomic::Ordering::Relaxed);
         let gen_arc = Arc::clone(&self.anim_generation);
         cx.spawn(async move |this, cx| {
             loop {

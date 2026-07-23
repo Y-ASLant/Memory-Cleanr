@@ -9,9 +9,7 @@ use smol::Timer;
 
 use crate::app::{ClipboardFilterSlide, ClipboardShiftAnim, MemoryCleanerApp};
 use crate::clipboard::ContentType;
-use crate::ui::clipboard_item_card::{
-    DragClipboardItem, ITEM_HEIGHT, render_clipboard_item,
-};
+use crate::ui::clipboard_item_card::{DragClipboardItem, ITEM_HEIGHT, render_clipboard_item};
 
 /// Clipboard-only window height (width matches the main 520px window).
 pub const CLIPBOARD_WINDOW_HEIGHT: f32 = 600.;
@@ -77,12 +75,14 @@ pub fn render_clipboard_panel(
                     .px_2()
                     .py_1()
                     .when(is_dragging, |el| el.cursor_grabbing())
-                    .on_drag_move(cx.listener(|app, e: &DragMoveEvent<DragClipboardItem>, window, cx| {
-                        update_drag_tearoff(app, e, window, cx);
-                        if !app.clipboard_drag_tearoff {
-                            update_drop_target_from_pointer(app, e, cx);
-                        }
-                    }))
+                    .on_drag_move(cx.listener(
+                        |app, e: &DragMoveEvent<DragClipboardItem>, window, cx| {
+                            update_drag_tearoff(app, e, window, cx);
+                            if !app.clipboard_drag_tearoff {
+                                update_drop_target_from_pointer(app, e, cx);
+                            }
+                        },
+                    ))
                     .on_drop(cx.listener(|app, drag: &DragClipboardItem, _, cx| {
                         if app.clipboard_drag_tearoff {
                             return;
@@ -261,12 +261,12 @@ fn start_clipboard_hover_fade_ticker(
                     }
                     let now = Instant::now();
                     let duration = Duration::from_millis(CLIPBOARD_HOVER_ANIM_MS);
-                    let animating = app.clipboard_hover_fades.values().any(|anim| {
-                        now.saturating_duration_since(anim.start) < duration
-                    });
-                    app.clipboard_hover_fades.retain(|_, anim| {
-                        now.saturating_duration_since(anim.start) < duration
-                    });
+                    let animating = app
+                        .clipboard_hover_fades
+                        .values()
+                        .any(|anim| now.saturating_duration_since(anim.start) < duration);
+                    app.clipboard_hover_fades
+                        .retain(|_, anim| now.saturating_duration_since(anim.start) < duration);
                     if animating {
                         cx.notify();
                     }
@@ -297,21 +297,15 @@ fn sample_shift_y(app: &MemoryCleanerApp, id: i64, now: Instant) -> f32 {
 /// Call whenever `clipboard_drop_target_id` changes (or drag starts).
 pub fn sync_clipboard_shift_anims(app: &mut MemoryCleanerApp, cx: &mut Context<MemoryCleanerApp>) {
     let dragging_id = app.clipboard_dragging_id;
-    let Some(active) = dragging_id.and_then(|id| {
-        app.clipboard_items
-            .iter()
-            .position(|item| item.id == id)
-    }) else {
+    let Some(active) =
+        dragging_id.and_then(|id| app.clipboard_items.iter().position(|item| item.id == id))
+    else {
         app.clipboard_shift_anims.clear();
         return;
     };
     let over = app
         .clipboard_drop_target_id
-        .and_then(|id| {
-            app.clipboard_items
-                .iter()
-                .position(|item| item.id == id)
-        })
+        .and_then(|id| app.clipboard_items.iter().position(|item| item.id == id))
         .unwrap_or(active);
 
     let now = Instant::now();
@@ -413,10 +407,7 @@ pub fn begin_delete_collapse(
     start_clipboard_shift_ticker(app, cx);
 }
 
-fn start_clipboard_shift_ticker(
-    app: &mut MemoryCleanerApp,
-    cx: &mut Context<MemoryCleanerApp>,
-) {
+fn start_clipboard_shift_ticker(app: &mut MemoryCleanerApp, cx: &mut Context<MemoryCleanerApp>) {
     app.clipboard_shift_tick_gen = app.clipboard_shift_tick_gen.wrapping_add(1);
     let tick_gen = app.clipboard_shift_tick_gen;
     cx.spawn(async move |this, cx| {
@@ -427,15 +418,16 @@ fn start_clipboard_shift_ticker(
                     if app.clipboard_shift_tick_gen != tick_gen {
                         return false;
                     }
-                    let live = app.clipboard_dragging_id.is_some()
-                        || app.clipboard_deleting_id.is_some();
+                    let live =
+                        app.clipboard_dragging_id.is_some() || app.clipboard_deleting_id.is_some();
                     if !live {
                         return false;
                     }
                     let now = Instant::now();
-                    let animating = app.clipboard_shift_anims.values().any(|anim| {
-                        now.saturating_duration_since(anim.start) < SHIFT_DURATION
-                    });
+                    let animating = app
+                        .clipboard_shift_anims
+                        .values()
+                        .any(|anim| now.saturating_duration_since(anim.start) < SHIFT_DURATION);
                     if animating {
                         cx.notify();
                     }
@@ -460,10 +452,7 @@ fn update_drag_tearoff(
 ) {
     let pos = e.event.position;
     let size = window.viewport_size();
-    let outside = pos.x < px(0.)
-        || pos.y < px(0.)
-        || pos.x >= size.width
-        || pos.y >= size.height;
+    let outside = pos.x < px(0.) || pos.y < px(0.) || pos.x >= size.width || pos.y >= size.height;
 
     if !outside {
         if app.clipboard_drag_tearoff {
@@ -490,10 +479,7 @@ fn update_drag_tearoff(
 
 const DRAG_TRACK_TICK: Duration = Duration::from_millis(16);
 
-fn cursor_outside_window_bounds(
-    cursor: Point<Pixels>,
-    bounds: Bounds<Pixels>,
-) -> bool {
+fn cursor_outside_window_bounds(cursor: Point<Pixels>, bounds: Bounds<Pixels>) -> bool {
     cursor.x < bounds.origin.x
         || cursor.y < bounds.origin.y
         || cursor.x >= bounds.origin.x + bounds.size.width
@@ -502,7 +488,10 @@ fn cursor_outside_window_bounds(
 
 /// Global cursor tracker: GPUI drag ghost stops at the window edge; once outside,
 /// a borderless follower window tracks the cursor until release.
-pub fn start_clipboard_drag_tracker(app: &mut MemoryCleanerApp, cx: &mut Context<MemoryCleanerApp>) {
+pub fn start_clipboard_drag_tracker(
+    app: &mut MemoryCleanerApp,
+    cx: &mut Context<MemoryCleanerApp>,
+) {
     app.clipboard_drag_track_tick_gen = app.clipboard_drag_track_tick_gen.wrapping_add(1);
     let tick_gen = app.clipboard_drag_track_tick_gen;
     cx.spawn(async move |this, cx| {
@@ -522,26 +511,21 @@ pub fn start_clipboard_drag_tracker(app: &mut MemoryCleanerApp, cx: &mut Context
                         Err(_) => return true,
                     };
 
-                    let outside = app
-                        .window
-                        .is_some_and(|handle| {
-                            handle
-                                .update(cx, |_, window, _| {
-                                    crate::win32::window::window_screen_bounds(window)
-                                })
-                                .ok()
-                                .and_then(|result| result.ok())
-                                .is_some_and(|bounds| {
-                                    cursor_outside_window_bounds(cursor, bounds)
-                                })
-                        });
+                    let outside = app.window.is_some_and(|handle| {
+                        handle
+                            .update(cx, |_, window, _| {
+                                crate::win32::window::window_screen_bounds(window)
+                            })
+                            .ok()
+                            .and_then(|result| result.ok())
+                            .is_some_and(|bounds| cursor_outside_window_bounds(cursor, bounds))
+                    });
 
                     if outside && !app.clipboard_drag_tearoff {
                         app.clipboard_drag_tearoff = true;
                         app.clipboard_drop_target_id = None;
                         app.clipboard_shift_anims.clear();
-                        app.clipboard_shift_tick_gen =
-                            app.clipboard_shift_tick_gen.wrapping_add(1);
+                        app.clipboard_shift_tick_gen = app.clipboard_shift_tick_gen.wrapping_add(1);
                         app.begin_clipboard_tearoff_preview(dragging_id, cx);
                         if let Some(handle) = app.window {
                             let _ = handle.update(cx, |_, window, _| window.refresh());
@@ -581,14 +565,7 @@ fn update_drop_target_from_pointer(
     }
 
     let row = ROW_HEIGHT;
-    let scroll_y = f32::from(
-        app.clipboard_list_scroll
-            .0
-            .borrow()
-            .base_handle
-            .offset()
-            .y,
-    );
+    let scroll_y = f32::from(app.clipboard_list_scroll.0.borrow().base_handle.offset().y);
     // offset.y is ≤ 0 when scrolled down; convert viewport Y → content Y.
     let y = f32::from(e.event.position.y - e.bounds.origin.y) - scroll_y;
 
@@ -715,9 +692,7 @@ fn sample_filter_slide(app: &MemoryCleanerApp, now: Instant) -> f32 {
     let Some(anim) = &app.clipboard_filter_slide else {
         return filter_index(app.clipboard_filter);
     };
-    let t = now
-        .saturating_duration_since(anim.start)
-        .as_secs_f32()
+    let t = now.saturating_duration_since(anim.start).as_secs_f32()
         / FILTER_SLIDE_DURATION.as_secs_f32();
     if t >= 1. {
         return anim.to;
@@ -747,10 +722,7 @@ pub fn begin_filter_slide(
     start_filter_slide_ticker(app, cx);
 }
 
-fn start_filter_slide_ticker(
-    app: &mut MemoryCleanerApp,
-    cx: &mut Context<MemoryCleanerApp>,
-) {
+fn start_filter_slide_ticker(app: &mut MemoryCleanerApp, cx: &mut Context<MemoryCleanerApp>) {
     app.clipboard_filter_tick_gen = app.clipboard_filter_tick_gen.wrapping_add(1);
     let tick_gen = app.clipboard_filter_tick_gen;
     cx.spawn(async move |this, cx| {

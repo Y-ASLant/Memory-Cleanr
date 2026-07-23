@@ -7,7 +7,7 @@ use smol::Timer;
 use crate::messages::{build_cleanup_result_message, format_freed_message};
 use crate::optimize::{self, MemoryAreas};
 
-use super::{OPTIMIZE_RESULT_DISPLAY, MemoryCleanerApp, show_toast};
+use super::{MemoryCleanerApp, OPTIMIZE_RESULT_DISPLAY, show_toast};
 
 impl MemoryCleanerApp {
     async fn run_optimize_step(

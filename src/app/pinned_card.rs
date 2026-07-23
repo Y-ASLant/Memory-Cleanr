@@ -49,7 +49,9 @@ impl PinnedCardWindow {
         let item_id = self.item.id;
         let pinned = window.window_handle();
         let app = cx.global::<AppEntityHolder>().0.clone();
-        app.update(cx, |app, cx| app.paste_clipboard_item_from_pinned(item_id, pinned, cx));
+        app.update(cx, |app, cx| {
+            app.paste_clipboard_item_from_pinned(item_id, pinned, cx)
+        });
     }
 
     fn close(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -81,11 +83,7 @@ impl PinnedCardWindow {
             let eased = 1.0 - (1.0 - t) * (1.0 - t);
             return anim.from + (anim.to - anim.from) * eased;
         }
-        if self.hovered {
-            1.0
-        } else {
-            0.0
-        }
+        if self.hovered { 1.0 } else { 0.0 }
     }
 
     fn begin_zone_fade(&mut self, cx: &mut Context<Self>) {
@@ -97,7 +95,11 @@ impl PinnedCardWindow {
             cx.notify();
             return;
         }
-        self.zone_fade = Some(ZoneFade { from, to, start: now });
+        self.zone_fade = Some(ZoneFade {
+            from,
+            to,
+            start: now,
+        });
         self.zone_fade_tick_gen = self.zone_fade_tick_gen.wrapping_add(1);
         let tick_gen = self.zone_fade_tick_gen;
         cx.spawn(async move |this, cx| {
@@ -144,25 +146,17 @@ impl Render for PinnedCardWindow {
             .relative()
             .w_full()
             .h_full()
-            .bg(theme.background)
             .child(
                 div()
                     .id(("pinned-card", item_id as u32))
                     .relative()
                     .w(px(PINNED_WINDOW_WIDTH))
                     .h(px(PINNED_WINDOW_HEIGHT))
-                    .overflow_hidden()
                     .bg(theme.background)
                     .border_1()
                     .border_color(theme.border)
                     .rounded_md()
-                    .shadow(vec![BoxShadow {
-                        color: hsla(0., 0., 0., 0.12),
-                        offset: point(px(0.), px(4.)),
-                        blur_radius: px(12.),
-                        spread_radius: px(0.),
-                        inset: false,
-                    }])
+                    .overflow_hidden()
                     .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
                         this.set_hovered(*hovered, cx);
                     }))

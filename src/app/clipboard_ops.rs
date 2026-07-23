@@ -1,4 +1,4 @@
-use gpui::{point, px, AnyWindowHandle, AppContext, Point, Pixels};
+use gpui::{AnyWindowHandle, AppContext, Pixels, Point, point, px};
 use gpui_component::{Root, WindowExt};
 use std::time::Duration;
 
@@ -59,7 +59,10 @@ impl MemoryCleanerApp {
         }
         // Must resize on the click's window — handle.update can leave the clipboard height
         // stuck after returning, which looks like a collapsed layout with empty space.
-        window.resize(super::window_size(self.settings_expanded, self.clipboard_visible));
+        window.resize(super::window_size(
+            self.settings_expanded,
+            self.clipboard_visible,
+        ));
         cx.notify();
     }
 
@@ -381,9 +384,9 @@ impl MemoryCleanerApp {
     }
 
     fn tearoff_preview_origin_for(&self, screen: Point<Pixels>, _cx: &gpui::App) -> Point<Pixels> {
-        let offset = self.clipboard_drag_cursor_offset.unwrap_or_else(|| {
-            point(px(DRAG_CARD_WIDTH / 2.), px(ITEM_HEIGHT / 2.))
-        });
+        let offset = self
+            .clipboard_drag_cursor_offset
+            .unwrap_or_else(|| point(px(DRAG_CARD_WIDTH / 2.), px(ITEM_HEIGHT / 2.)));
         crate::ui::tearoff_drag_preview::tearoff_preview_origin(screen, offset)
     }
 
@@ -401,7 +404,8 @@ impl MemoryCleanerApp {
     }
 
     pub fn begin_clipboard_tearoff_preview(&mut self, item_id: i64, cx: &mut gpui::Context<Self>) {
-        if self.clipboard_tearoff_preview_handle.is_some() || self.clipboard_tearoff_preview_opening {
+        if self.clipboard_tearoff_preview_handle.is_some() || self.clipboard_tearoff_preview_opening
+        {
             self.update_clipboard_tearoff_preview_position(cx);
             return;
         }
@@ -412,13 +416,15 @@ impl MemoryCleanerApp {
             .find(|item| item.id == item_id)
             .cloned()
             .or_else(|| {
-                self.clipboard_storage.as_ref().and_then(|storage| {
-                    storage.get(item_id).ok().flatten()
-                })
+                self.clipboard_storage
+                    .as_ref()
+                    .and_then(|storage| storage.get(item_id).ok().flatten())
             });
 
         let Some(item) = item else {
-            crate::log_msg(&format!("[clipboard] tearoff preview missing item {item_id}"));
+            crate::log_msg(&format!(
+                "[clipboard] tearoff preview missing item {item_id}"
+            ));
             return;
         };
 
@@ -480,9 +486,9 @@ impl MemoryCleanerApp {
             .find(|item| item.id == item_id)
             .cloned()
             .or_else(|| {
-                self.clipboard_storage.as_ref().and_then(|storage| {
-                    storage.get(item_id).ok().flatten()
-                })
+                self.clipboard_storage
+                    .as_ref()
+                    .and_then(|storage| storage.get(item_id).ok().flatten())
             });
 
         let Some(item) = item else {

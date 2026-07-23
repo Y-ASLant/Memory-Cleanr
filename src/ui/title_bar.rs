@@ -227,20 +227,23 @@ fn title_bar_drag_area(
                 window.start_window_move();
             }
         }))
-        .child(Icon::new(if app.clipboard_visible {
-            IconName::Copy
-        } else {
-            IconName::MemoryStick
-        }).small())
+        .child(
+            Icon::new(if app.clipboard_visible {
+                IconName::Copy
+            } else {
+                IconName::MemoryStick
+            })
+            .small(),
+        )
         .child(
             Label::new(if app.clipboard_visible {
                 t!("clipboard.title").to_string()
             } else {
                 APP_NAME.to_string()
             })
-                .text_sm()
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(foreground),
+            .text_sm()
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(foreground),
         )
 }
 

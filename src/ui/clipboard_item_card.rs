@@ -5,7 +5,9 @@ use gpui::*;
 use gpui_component::{
     ActiveTheme, Icon, IconName, InteractiveElementExt, Sizable, Size,
     button::{Button, ButtonVariants},
-    h_flex, label::Label, v_flex,
+    h_flex,
+    label::Label,
+    v_flex,
 };
 use rust_i18n::t;
 
@@ -221,11 +223,11 @@ pub fn render_clipboard_item(
                     let preview = drag_preview.clone();
                     let app_entity = app_entity.clone();
                     move |item, offset, _window, cx| {
-                                app_entity.update(cx, |app, cx| {
-                                    app.clipboard_shift_anims.clear();
-                                    app.clipboard_drag_tearoff = false;
-                                    app.clipboard_drag_cursor_offset = Some(offset);
-                                    app.clipboard_dragging_id = Some(item.id);
+                        app_entity.update(cx, |app, cx| {
+                            app.clipboard_shift_anims.clear();
+                            app.clipboard_drag_tearoff = false;
+                            app.clipboard_drag_cursor_offset = Some(offset);
+                            app.clipboard_dragging_id = Some(item.id);
                             app.clipboard_drop_target_id = Some(item.id);
                             if app.clipboard_hovered_id == Some(item.id) {
                                 app.clipboard_hovered_id = None;
@@ -272,11 +274,7 @@ pub fn render_clipboard_item(
                         Button::new(("clipboard-delete", item_id as u32))
                             .ghost()
                             .xsmall()
-                            .icon(
-                                Icon::new(IconName::CircleX)
-                                    .xsmall()
-                                    .text_color(danger),
-                            )
+                            .icon(Icon::new(IconName::CircleX).xsmall().text_color(danger))
                             .tooltip(t!("clipboard.delete_tooltip").to_string())
                             .on_click(cx.listener(move |app, _, window, cx| {
                                 cx.stop_propagation();
@@ -465,7 +463,10 @@ fn display_lines(item: &ClipboardItem) -> Vec<String> {
         return lines;
     }
 
-    let total_lines = source.lines().filter(|line| !line.trim().is_empty()).count();
+    let total_lines = source
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count();
     if total_lines > MAX_DISPLAY_LINES
         && let Some(last) = lines.last_mut()
     {

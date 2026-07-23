@@ -4,7 +4,6 @@ mod optimize_impl;
 mod pinned_card;
 mod window;
 
-
 use rust_i18n::t;
 
 use std::collections::HashMap;
@@ -23,8 +22,8 @@ use crate::memory::{MemorySection, MemoryStatus};
 use crate::optimize::MemoryAreas;
 use crate::settings::Settings;
 use crate::tray::{TrayCommand, dispatch_command};
-use crate::win32;
 use crate::ui::layout::SECTION_GAP;
+use crate::win32;
 
 pub(crate) const SETTINGS_SAVE_DEBOUNCE: Duration = Duration::from_millis(300);
 pub(crate) const OPTIMIZE_RESULT_DISPLAY: Duration = Duration::from_secs(5);
@@ -469,12 +468,11 @@ impl MemoryCleanerApp {
                     cx.spawn(async move |this, cx| {
                         let mut rx = clip_rx;
                         loop {
-                            let (result, returned_rx) =
-                                smol::unblock(move || {
-                                    let r = rx.recv();
-                                    (r, rx)
-                                })
-                                .await;
+                            let (result, returned_rx) = smol::unblock(move || {
+                                let r = rx.recv();
+                                (r, rx)
+                            })
+                            .await;
                             rx = returned_rx;
 
                             let Ok(content) = result else {

@@ -2,12 +2,15 @@ use gpui::*;
 
 use crate::clipboard::ClipboardItem;
 use crate::ui::clipboard_item_card::{
-    DRAG_CARD_WIDTH, ITEM_HEIGHT, DragPreviewCard, drag_preview_card_from_item,
+    DRAG_CARD_WIDTH, DragPreviewCard, ITEM_HEIGHT, drag_preview_card_from_item,
     render_drag_preview_ghost,
 };
 
 /// Screen origin for the tear-off drag ghost (preserves GPUI grab offset).
-pub fn tearoff_preview_origin(screen: Point<Pixels>, cursor_offset: Point<Pixels>) -> Point<Pixels> {
+pub fn tearoff_preview_origin(
+    screen: Point<Pixels>,
+    cursor_offset: Point<Pixels>,
+) -> Point<Pixels> {
     point(screen.x - cursor_offset.x, screen.y - cursor_offset.y)
 }
 

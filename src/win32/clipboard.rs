@@ -10,12 +10,14 @@ use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
 };
-use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VK_CONTROL,
-    VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_V, VIRTUAL_KEY,
+    INPUT, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY,
+    VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_V,
 };
-use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, SendMessageTimeoutW, SMTO_ABORTIFHUNG};
+use windows::Win32::UI::WindowsAndMessaging::{
+    PostMessageW, SMTO_ABORTIFHUNG, SendMessageTimeoutW,
+};
 
 use crate::win32::focus;
 
