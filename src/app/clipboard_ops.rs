@@ -143,7 +143,9 @@ impl MemoryCleanerApp {
                 Err(e) => crate::log_msg(&format!("[clipboard] clear failed: {e:#}")),
             }
         }
-        self.clipboard_hovered_id = None;
+        if let Some(hovered) = self.clipboard_hovered_id.take() {
+            crate::ui::clipboard_panel::begin_clipboard_hover_fade(self, hovered, cx);
+        }
         self.clipboard_selected = None;
         cx.notify();
     }
@@ -191,6 +193,7 @@ impl MemoryCleanerApp {
 
         self.clipboard_deleting_id = Some(id);
         self.clipboard_hovered_id = None;
+        crate::ui::clipboard_panel::begin_clipboard_hover_fade(self, id, cx);
         crate::ui::clipboard_panel::begin_delete_collapse(self, index, cx);
         cx.notify();
 
@@ -286,6 +289,7 @@ impl MemoryCleanerApp {
         }
         if self.clipboard_hovered_id == Some(id) {
             self.clipboard_hovered_id = None;
+            crate::ui::clipboard_panel::begin_clipboard_hover_fade(self, id, cx);
         }
         cx.notify();
     }

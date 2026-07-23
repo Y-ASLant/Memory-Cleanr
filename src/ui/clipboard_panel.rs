@@ -30,6 +30,8 @@ const SHIFT_TICK: Duration = Duration::from_millis(8);
 pub const DELETE_ANIM_MS: u64 = 160;
 /// Segment indicator slide (ElegantClipboard `duration-200 ease-out`).
 const FILTER_SLIDE_DURATION: Duration = Duration::from_millis(200);
+/// Card hover reveal: zone tint, labels, delete affordance (same duration/easing as filter slide).
+pub const CLIPBOARD_HOVER_ANIM_MS: u64 = 200;
 const FILTER_SEGMENT_COUNT: f32 = 3.;
 
 /// Render the clipboard panel (full window content when clipboard mode is active).
@@ -186,6 +188,91 @@ pub(crate) fn sortable_shift_y(index: usize, active: usize, over: usize) -> f32 
 fn ease_out_quad(t: f32) -> f32 {
     let t = t.clamp(0., 1.);
     1.0 - (1.0 - t) * (1.0 - t)
+}
+
+/// Sample hover-reveal opacity for zone tint, labels, and delete affordance.
+pub fn sample_clipboard_hover_opacity(app: &MemoryCleanerApp, id: i64, now: Instant) -> f32 {
+    if let Some(anim) = app.clipboard_hover_fades.get(&id) {
+        let elapsed = now.saturating_duration_since(anim.start);
+        let t = elapsed.as_secs_f32() / (CLIPBOARD_HOVER_ANIM_MS as f32 / 1000.);
+        if t >= 1. {
+            return anim.to;
+        }
+        return anim.from + (anim.to - anim.from) * ease_out_quad(t);
+    }
+    if app.clipboard_hovered_id == Some(id) {
+        1.0
+    } else {
+        0.0
+    }
+}
+
+/// Retarget a card's hover-reveal tween when pointer enters/leaves.
+pub fn begin_clipboard_hover_fade(
+    app: &mut MemoryCleanerApp,
+    id: i64,
+    cx: &mut Context<MemoryCleanerApp>,
+) {
+    let now = Instant::now();
+    let to = if app.clipboard_hovered_id == Some(id) {
+        1.0
+    } else {
+        0.0
+    };
+    let from = sample_clipboard_hover_opacity(app, id, now);
+    if (from - to).abs() < 0.001 {
+        app.clipboard_hover_fades.remove(&id);
+        return;
+    }
+    app.clipboard_hover_fades.insert(
+        id,
+        crate::app::ClipboardHoverFade {
+            from,
+            to,
+            start: now,
+        },
+    );
+    start_clipboard_hover_fade_ticker(app, cx);
+    cx.notify();
+}
+
+fn start_clipboard_hover_fade_ticker(
+    app: &mut MemoryCleanerApp,
+    cx: &mut Context<MemoryCleanerApp>,
+) {
+    app.clipboard_hover_fade_tick_gen = app.clipboard_hover_fade_tick_gen.wrapping_add(1);
+    let tick_gen = app.clipboard_hover_fade_tick_gen;
+    cx.spawn(async move |this, cx| {
+        loop {
+            Timer::after(SHIFT_TICK).await;
+            let keep = this
+                .update(cx, |app, cx| {
+                    if app.clipboard_hover_fade_tick_gen != tick_gen {
+                        return false;
+                    }
+                    if app.clipboard_hover_fades.is_empty() {
+                        return false;
+                    }
+                    let now = Instant::now();
+                    let duration = Duration::from_millis(CLIPBOARD_HOVER_ANIM_MS);
+                    let animating = app.clipboard_hover_fades.values().any(|anim| {
+                        now.saturating_duration_since(anim.start) < duration
+                    });
+                    app.clipboard_hover_fades.retain(|_, anim| {
+                        now.saturating_duration_since(anim.start) < duration
+                    });
+                    if animating {
+                        cx.notify();
+                    }
+                    animating
+                })
+                .unwrap_or(false);
+            if !keep {
+                break;
+            }
+        }
+    })
+    .detach();
 }
 
 fn sample_shift_y(app: &MemoryCleanerApp, id: i64, now: Instant) -> f32 {

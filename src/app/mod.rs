@@ -180,8 +180,12 @@ pub struct MemoryCleanerApp {
     pub clipboard_deleting_id: Option<i64>,
     /// Per-item translateY tween while reordering (dnd-kit style make-way).
     pub clipboard_shift_anims: HashMap<i64, ClipboardShiftAnim>,
+    /// Per-card hover reveal opacity tween.
+    pub clipboard_hover_fades: HashMap<i64, ClipboardHoverFade>,
     /// Bumps to cancel the in-flight shift ticker.
     pub clipboard_shift_tick_gen: u32,
+    /// Bumps to cancel the hover-fade ticker.
+    pub clipboard_hover_fade_tick_gen: u32,
     /// Scroll handle for the clipboard virtual list.
     pub clipboard_list_scroll: UniformListScrollHandle,
     pub(crate) anim_physical: AnimatedValue,
@@ -205,6 +209,14 @@ pub struct ClipboardShiftAnim {
 /// Filter segment indicator position (0 = 全部, 1 = 文本, 2 = 文件).
 #[derive(Clone, Debug)]
 pub struct ClipboardFilterSlide {
+    pub from: f32,
+    pub to: f32,
+    pub start: Instant,
+}
+
+/// Per-card hover reveal opacity (zone tint, labels, delete button).
+#[derive(Clone, Debug)]
+pub struct ClipboardHoverFade {
     pub from: f32,
     pub to: f32,
     pub start: Instant,
@@ -286,7 +298,9 @@ impl MemoryCleanerApp {
             clipboard_hovered_id: None,
             clipboard_deleting_id: None,
             clipboard_shift_anims: HashMap::new(),
+            clipboard_hover_fades: HashMap::new(),
             clipboard_shift_tick_gen: 0,
+            clipboard_hover_fade_tick_gen: 0,
             clipboard_list_scroll: UniformListScrollHandle::new(),
             anim_physical: AnimatedValue::new(phys_percent),
             anim_virtual: AnimatedValue::new(virt_percent),
