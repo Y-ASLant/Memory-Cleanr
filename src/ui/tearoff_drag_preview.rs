@@ -6,12 +6,9 @@ use crate::ui::clipboard_item_card::{
     render_drag_preview_ghost,
 };
 
-/// Screen origin for the tear-off drag ghost (cursor centered on card).
-pub fn tearoff_preview_origin(screen: Point<Pixels>) -> Point<Pixels> {
-    point(
-        screen.x - px(DRAG_CARD_WIDTH / 2.),
-        screen.y - px(ITEM_HEIGHT / 2.),
-    )
+/// Screen origin for the tear-off drag ghost (preserves GPUI grab offset).
+pub fn tearoff_preview_origin(screen: Point<Pixels>, cursor_offset: Point<Pixels>) -> Point<Pixels> {
+    point(screen.x - cursor_offset.x, screen.y - cursor_offset.y)
 }
 
 pub fn tearoff_preview_window_options(origin: Point<Pixels>) -> WindowOptions {

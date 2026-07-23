@@ -1,4 +1,4 @@
-use gpui::{point, px, AppContext};
+use gpui::{point, px, AppContext, Point, Pixels};
 use gpui_component::{Root, WindowExt};
 use std::time::Duration;
 
@@ -6,6 +6,7 @@ use rust_i18n::t;
 use smol::Timer;
 
 use crate::clipboard::{self, ContentType};
+use crate::ui::clipboard_item_card::{DRAG_CARD_WIDTH, ITEM_HEIGHT};
 use crate::win32;
 
 use super::MemoryCleanerApp;
@@ -321,6 +322,7 @@ impl MemoryCleanerApp {
 
     pub fn clear_clipboard_drag_preview(&mut self, cx: &mut gpui::Context<Self>) {
         self.clipboard_dragging_id = None;
+        self.clipboard_drag_cursor_offset = None;
         self.clipboard_drop_target_id = None;
         self.clipboard_shift_anims.clear();
         self.clipboard_shift_tick_gen = self.clipboard_shift_tick_gen.wrapping_add(1);
@@ -335,6 +337,13 @@ impl MemoryCleanerApp {
         }
     }
 
+    fn tearoff_preview_origin_for(&self, screen: Point<Pixels>, _cx: &gpui::App) -> Point<Pixels> {
+        let offset = self.clipboard_drag_cursor_offset.unwrap_or_else(|| {
+            point(px(DRAG_CARD_WIDTH / 2.), px(ITEM_HEIGHT / 2.))
+        });
+        crate::ui::tearoff_drag_preview::tearoff_preview_origin(screen, offset)
+    }
+
     pub fn update_clipboard_tearoff_preview_position(&mut self, cx: &mut gpui::Context<Self>) {
         let Some(handle) = self.clipboard_tearoff_preview_handle else {
             return;
@@ -342,7 +351,7 @@ impl MemoryCleanerApp {
         let Ok(screen) = crate::win32::cursor::screen_point() else {
             return;
         };
-        let origin = crate::ui::tearoff_drag_preview::tearoff_preview_origin(screen);
+        let origin = self.tearoff_preview_origin_for(screen, cx);
         let _ = handle.update(cx, |_, window, _| {
             let _ = crate::win32::window::set_window_screen_origin(window, origin);
         });
@@ -374,7 +383,7 @@ impl MemoryCleanerApp {
         cx.notify();
 
         let screen = crate::win32::cursor::screen_point().unwrap_or(point(px(200.), px(200.)));
-        let origin = crate::ui::tearoff_drag_preview::tearoff_preview_origin(screen);
+        let origin = self.tearoff_preview_origin_for(screen, cx);
         let options = crate::ui::tearoff_drag_preview::tearoff_preview_window_options(origin);
 
         cx.spawn(async move |this, cx| {

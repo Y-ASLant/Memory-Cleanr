@@ -220,10 +220,11 @@ pub fn render_clipboard_item(
                 .on_drag(drag_payload, {
                     let preview = drag_preview.clone();
                     let app_entity = app_entity.clone();
-                    move |item, _offset, _window, cx| {
+                    move |item, offset, _window, cx| {
                                 app_entity.update(cx, |app, cx| {
                                     app.clipboard_shift_anims.clear();
                                     app.clipboard_drag_tearoff = false;
+                                    app.clipboard_drag_cursor_offset = Some(offset);
                                     app.clipboard_dragging_id = Some(item.id);
                             app.clipboard_drop_target_id = Some(item.id);
                             if app.clipboard_hovered_id == Some(item.id) {

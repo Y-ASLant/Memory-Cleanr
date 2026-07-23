@@ -177,6 +177,8 @@ pub struct MemoryCleanerApp {
     pub clipboard_dragging_id: Option<i64>,
     /// Drag pointer left the main window — release should pin a desktop card.
     pub clipboard_drag_tearoff: bool,
+    /// Grab offset within the card (matches GPUI active_drag cursor_offset).
+    pub clipboard_drag_cursor_offset: Option<Point<Pixels>>,
     /// Borderless follower window while dragging outside the main window.
     pub clipboard_tearoff_preview_handle: Option<AnyWindowHandle>,
     /// Prevents duplicate async open while the follower window is being created.
@@ -307,6 +309,7 @@ impl MemoryCleanerApp {
             clipboard_drop_target_id: None,
             clipboard_dragging_id: None,
             clipboard_drag_tearoff: false,
+            clipboard_drag_cursor_offset: None,
             clipboard_tearoff_preview_handle: None,
             clipboard_tearoff_preview_opening: false,
             clipboard_drag_track_tick_gen: 0,
