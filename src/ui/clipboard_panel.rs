@@ -122,7 +122,7 @@ pub fn render_clipboard_panel(
                         .text_color(muted),
                 )
                 .child(
-                    Label::new("点击粘贴 · 删除需确认 · 拖拽左侧调整顺序".to_string())
+                    Label::new("点击右侧粘贴 · 删除需确认 · 左侧拖拽调整顺序".to_string())
                         .text_xs()
                         .text_color(muted),
                 ),

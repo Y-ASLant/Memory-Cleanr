@@ -39,13 +39,10 @@ impl Render for DragPreviewCard {
         // Keep the ghost non-interactive so list `on_drag_move` still receives pointer events
         // (same idea as dnd-kit DragOverlay not blocking collision).
         let theme = cx.theme();
-        h_flex()
+        div()
+            .relative()
             .w(px(DRAG_CARD_WIDTH))
             .h(px(ITEM_HEIGHT))
-            .py_2()
-            .px_2()
-            .gap_2()
-            .items_start()
             .overflow_hidden()
             .bg(theme.background)
             .border_1()
@@ -54,15 +51,10 @@ impl Render for DragPreviewCard {
             .cursor_grabbing()
             .child(
                 div()
-                    .w(px(20.))
-                    .flex_shrink_0()
-                    .pt_1()
-                    .child(drag_handle_icon(theme.muted_foreground)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
+                    .absolute()
+                    .inset_0()
+                    .px_2()
+                    .py_2()
                     .overflow_hidden()
                     .child(card_content(
                         self.content_type,
@@ -132,20 +124,16 @@ pub fn render_clipboard_item(
     let drag_payload = DragClipboardItem { id: item_id };
     let app_entity = cx.global::<AppEntityHolder>().0.clone();
 
-    let card = h_flex()
+    let card = div()
         .id(("clipboard-item", item_id as u32))
+        .relative()
         .w_full()
         .h(px(ITEM_HEIGHT))
-        .py_2()
-        .px_2()
-        .gap_2()
-        .items_start()
         .overflow_hidden()
         .bg(bg)
         .border_1()
         .border_color(border_color)
         .rounded_md()
-        .cursor_pointer()
         .on_hover(cx.listener(move |app, hovered: &bool, _, cx| {
             if *hovered {
                 if app.clipboard_hovered_id != Some(item_id) {
@@ -159,63 +147,13 @@ pub fn render_clipboard_item(
         }))
         .when(!is_selected && !is_deleting, |el| {
             el.hover(move |style| style.bg(hover_bg).border_color(hover_border))
-                .active(move |style| style.bg(active_bg).border_color(hover_border))
         })
-        .when(is_selected && !is_deleting, |el| {
-            el.active(move |style| style.bg(active_bg))
-        })
-        .on_click(cx.listener(move |app, _, _, cx| {
-            if app.clipboard_deleting_id.is_some() {
-                return;
-            }
-            app.clipboard_selected = Some(index);
-            app.paste_clipboard_item(item_id, cx);
-        }))
-        .on_double_click(cx.listener(move |app, _, window, cx| {
-            if app.clipboard_deleting_id.is_some() {
-                return;
-            }
-            app.open_clipboard_delete_confirm(item_id, window, cx);
-        }))
         .child(
             div()
-                .id(("clipboard-drag", item_id as u32))
-                .w(px(20.))
-                .h_full()
-                .flex_shrink_0()
-                .pt_1()
-                .rounded_sm()
-                .cursor_grab()
-                .hover(move |style| style.bg(hover_bg))
-                .active(move |style| style.bg(active_bg))
-                // Keep clicks on the handle from also triggering paste on the card.
-                .on_click(|_, _, cx| cx.stop_propagation())
-                .on_drag(drag_payload, {
-                    let preview = drag_preview.clone();
-                    let app_entity = app_entity.clone();
-                    move |item, _offset, _window, cx| {
-                        app_entity.update(cx, |app, cx| {
-                            app.clipboard_shift_anims.clear();
-                            app.clipboard_dragging_id = Some(item.id);
-                            // Start with over = self (no sibling shift yet).
-                            app.clipboard_drop_target_id = Some(item.id);
-                            app.clipboard_hovered_id = None;
-                            crate::ui::clipboard_panel::sync_clipboard_shift_anims(app, cx);
-                            cx.notify();
-                        });
-                        let preview = preview.clone();
-                        cx.new(move |_cx| preview)
-                    }
-                })
-                .child(drag_handle_icon(theme.muted_foreground)),
-        )
-        .child(
-            // Content-only region: click/hover live on the card shell so feedback covers
-            // the full row (labels/icons don't need their own hit targets).
-            div()
-                .flex_1()
-                .min_w_0()
-                .h_full()
+                .absolute()
+                .inset_0()
+                .px_2()
+                .py_2()
                 .overflow_hidden()
                 .child(card_content(
                     item.content_type,
@@ -226,12 +164,68 @@ pub fn render_clipboard_item(
                     cx,
                 )),
         )
+        .child(
+            h_flex()
+                .w_full()
+                .h_full()
+                .child(
+                    div()
+                        .id(("clipboard-drag", item_id as u32))
+                        .flex_1()
+                        .h_full()
+                        .cursor_grab()
+                        .on_click(|_, _, cx| cx.stop_propagation())
+                        .on_drag(drag_payload, {
+                            let preview = drag_preview.clone();
+                            let app_entity = app_entity.clone();
+                            move |item, _offset, _window, cx| {
+                                app_entity.update(cx, |app, cx| {
+                                    app.clipboard_shift_anims.clear();
+                                    app.clipboard_dragging_id = Some(item.id);
+                                    app.clipboard_drop_target_id = Some(item.id);
+                                    app.clipboard_hovered_id = None;
+                                    crate::ui::clipboard_panel::sync_clipboard_shift_anims(app, cx);
+                                    cx.notify();
+                                });
+                                let preview = preview.clone();
+                                cx.new(move |_cx| preview)
+                            }
+                        }),
+                )
+                .child(
+                    div()
+                        .id(("clipboard-paste", item_id as u32))
+                        .flex_1()
+                        .h_full()
+                        .cursor_pointer()
+                        .when(!is_selected && !is_deleting, |el| {
+                            el.active(move |style| style.bg(active_bg).border_color(hover_border))
+                        })
+                        .when(is_selected && !is_deleting, |el| {
+                            el.active(move |style| style.bg(active_bg))
+                        })
+                        .on_click(cx.listener(move |app, _, _, cx| {
+                            if app.clipboard_deleting_id.is_some() {
+                                return;
+                            }
+                            app.clipboard_selected = Some(index);
+                            app.paste_clipboard_item(item_id, cx);
+                        }))
+                        .on_double_click(cx.listener(move |app, _, window, cx| {
+                            if app.clipboard_deleting_id.is_some() {
+                                return;
+                            }
+                            app.open_clipboard_delete_confirm(item_id, window, cx);
+                        })),
+                ),
+        )
         .when(show_actions, |el| {
             el.child(
                 div()
                     .id(("clipboard-delete-wrap", item_id as u32))
-                    .flex_shrink_0()
-                    .pt_1()
+                    .absolute()
+                    .top(px(4.))
+                    .right(px(4.))
                     .on_click(|_, _, cx| cx.stop_propagation())
                     .child(
                         Button::new(("clipboard-delete", item_id as u32))
@@ -265,12 +259,6 @@ pub fn render_clipboard_item(
     } else {
         card.into_any_element()
     }
-}
-
-fn drag_handle_icon(muted: Hsla) -> impl IntoElement {
-    Icon::new(IconName::Menu)
-        .with_size(Size::Small)
-        .text_color(muted)
 }
 
 fn card_content(
