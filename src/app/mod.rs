@@ -1,6 +1,7 @@
 mod clipboard_ops;
 mod memory;
 mod optimize_impl;
+mod pinned_card;
 mod window;
 
 
@@ -174,6 +175,10 @@ pub struct MemoryCleanerApp {
     pub clipboard_drop_target_id: Option<i64>,
     /// Item currently being dragged (dims the source card).
     pub clipboard_dragging_id: Option<i64>,
+    /// Drag pointer left the main window — release should pin a desktop card.
+    pub clipboard_drag_tearoff: bool,
+    /// Floating desktop card windows keyed by clipboard item id.
+    pub pinned_card_handles: HashMap<i64, AnyWindowHandle>,
     /// Card under the pointer (reveals row actions).
     pub clipboard_hovered_id: Option<i64>,
     /// Item playing delete exit animation before removal.
@@ -295,6 +300,8 @@ impl MemoryCleanerApp {
             clipboard_selected: None,
             clipboard_drop_target_id: None,
             clipboard_dragging_id: None,
+            clipboard_drag_tearoff: false,
+            pinned_card_handles: HashMap::new(),
             clipboard_hovered_id: None,
             clipboard_deleting_id: None,
             clipboard_shift_anims: HashMap::new(),
@@ -578,9 +585,15 @@ fn memory_group_box(
 
 impl Render for MemoryCleanerApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Drop / Esc / release-outside clears GPUI drag; sync our reorder preview state.
+        // Drop / Esc / release-outside clears GPUI drag; sync reorder or pin preview state.
         if self.clipboard_dragging_id.is_some() && !cx.has_active_drag() {
+            let tearoff = self.clipboard_drag_tearoff;
+            let item_id = self.clipboard_dragging_id;
+            self.clipboard_drag_tearoff = false;
             self.clear_clipboard_drag_preview();
+            if tearoff && let Some(id) = item_id {
+                self.open_pinned_card_from_tearoff(id, cx);
+            }
         }
         use crate::ui::memory_card::render_memory_card;
         use crate::ui::settings_page::{render_cleanup_footer, render_settings_content};

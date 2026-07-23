@@ -91,8 +91,14 @@ clipboard.paste_zone:
   zh-CN: "粘贴区域"
   en: "Paste zone"
 clipboard.status_hint:
-  zh-CN: "点击右侧粘贴 · 删除需确认 · 左侧拖拽调整顺序"
-  en: "Click right to paste · Delete needs confirmation · Drag left to reorder"
+  zh-CN: "点击右侧粘贴 · 删除需确认 · 左侧拖拽排序 · 拖出窗口可钉住"
+  en: "Click right to paste · Delete needs confirmation · Drag left to reorder · Drag out to pin"
+clipboard.unpin_tooltip:
+  zh-CN: "取消钉住"
+  en: "Unpin"
+clipboard.pinned_title:
+  zh-CN: "剪贴板卡片"
+  en: "Clipboard card"
 
 tray.tooltip:
   zh-CN: "物理内存: %{percent}"

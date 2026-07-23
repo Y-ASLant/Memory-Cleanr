@@ -1,4 +1,5 @@
-use gpui_component::WindowExt;
+use gpui::{point, px, AppContext};
+use gpui_component::{Root, WindowExt};
 use std::time::Duration;
 
 use rust_i18n::t;
@@ -323,6 +324,68 @@ impl MemoryCleanerApp {
         self.clipboard_drop_target_id = None;
         self.clipboard_shift_anims.clear();
         self.clipboard_shift_tick_gen = self.clipboard_shift_tick_gen.wrapping_add(1);
+    }
+
+    /// Spawn a frameless desktop card when the user drags a row out of the main window.
+    pub fn open_pinned_card_from_tearoff(&mut self, item_id: i64, cx: &mut gpui::Context<Self>) {
+        use crate::app::pinned_card::{
+            PinnedCardWindow, pinned_window_options, pinned_window_origin, window_title_for_item,
+        };
+
+        if let Some(handle) = self.pinned_card_handles.get(&item_id) {
+            if handle
+                .update(cx, |_, window, _| {
+                    window.activate_window();
+                })
+                .is_ok()
+            {
+                return;
+            }
+            self.pinned_card_handles.remove(&item_id);
+        }
+
+        let item = self
+            .clipboard_items
+            .iter()
+            .find(|item| item.id == item_id)
+            .cloned()
+            .or_else(|| {
+                self.clipboard_storage.as_ref().and_then(|storage| {
+                    storage.get(item_id).ok().flatten()
+                })
+            });
+
+        let Some(item) = item else {
+            crate::log_msg(&format!("[clipboard] tearoff missing item {item_id}"));
+            return;
+        };
+
+        let screen = crate::win32::cursor::screen_point().unwrap_or(point(px(200.), px(200.)));
+        let origin = pinned_window_origin(screen);
+        let options = pinned_window_options(origin);
+        let title = window_title_for_item(&item);
+        let item_for_window = item.clone();
+
+        cx.spawn(async move |this, cx| {
+            let opened = cx.open_window(options, |window, cx| {
+                window.set_window_title(&title);
+                crate::ui::theme::init_light_theme(window, cx);
+                let pinned = cx.new(|_| PinnedCardWindow::new(item_for_window));
+                cx.new(|cx| Root::new(pinned, window, cx))
+            });
+
+            match opened {
+                Ok(handle) => {
+                    let _ = this.update(cx, |app, _| {
+                        app.pinned_card_handles.insert(item_id, handle.into());
+                    });
+                }
+                Err(e) => {
+                    crate::log_msg(&format!("[clipboard] pinned window open failed: {e:#}"));
+                }
+            }
+        })
+        .detach();
     }
 
     /// Process a raw clipboard content (called from monitor thread via channel).

@@ -77,10 +77,16 @@ pub fn render_clipboard_panel(
                     .px_2()
                     .py_1()
                     .when(is_dragging, |el| el.cursor_grabbing())
-                    .on_drag_move(cx.listener(|app, e: &DragMoveEvent<DragClipboardItem>, _, cx| {
-                        update_drop_target_from_pointer(app, e, cx);
+                    .on_drag_move(cx.listener(|app, e: &DragMoveEvent<DragClipboardItem>, window, cx| {
+                        update_drag_tearoff(app, e, window, cx);
+                        if !app.clipboard_drag_tearoff {
+                            update_drop_target_from_pointer(app, e, cx);
+                        }
                     }))
                     .on_drop(cx.listener(|app, drag: &DragClipboardItem, _, cx| {
+                        if app.clipboard_drag_tearoff {
+                            return;
+                        }
                         let target = app.clipboard_drop_target_id;
                         if let Some(to) = target
                             && drag.id != to
@@ -443,6 +449,33 @@ fn start_clipboard_shift_ticker(
         }
     })
     .detach();
+}
+
+/// Resolve `over` from pointer Y — closest row center (dnd-kit `closestCenter` for
+/// uniform rows) with light hysteresis so the boundary doesn't chatter.
+fn update_drag_tearoff(
+    app: &mut MemoryCleanerApp,
+    e: &DragMoveEvent<DragClipboardItem>,
+    window: &mut Window,
+    cx: &mut Context<MemoryCleanerApp>,
+) {
+    if app.clipboard_drag_tearoff {
+        return;
+    }
+    let pos = e.event.position;
+    let size = window.viewport_size();
+    let outside = pos.x < px(0.)
+        || pos.y < px(0.)
+        || pos.x >= size.width
+        || pos.y >= size.height;
+    if !outside {
+        return;
+    }
+    app.clipboard_drag_tearoff = true;
+    app.clipboard_drop_target_id = None;
+    app.clipboard_shift_anims.clear();
+    app.clipboard_shift_tick_gen = app.clipboard_shift_tick_gen.wrapping_add(1);
+    cx.notify();
 }
 
 /// Resolve `over` from pointer Y — closest row center (dnd-kit `closestCenter` for

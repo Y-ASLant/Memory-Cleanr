@@ -202,9 +202,10 @@ pub fn render_clipboard_item(
                     let preview = drag_preview.clone();
                     let app_entity = app_entity.clone();
                     move |item, _offset, _window, cx| {
-                        app_entity.update(cx, |app, cx| {
-                            app.clipboard_shift_anims.clear();
-                            app.clipboard_dragging_id = Some(item.id);
+                                app_entity.update(cx, |app, cx| {
+                                    app.clipboard_shift_anims.clear();
+                                    app.clipboard_drag_tearoff = false;
+                                    app.clipboard_dragging_id = Some(item.id);
                             app.clipboard_drop_target_id = Some(item.id);
                             if app.clipboard_hovered_id == Some(item.id) {
                                 app.clipboard_hovered_id = None;
@@ -386,6 +387,25 @@ fn card_content(
                 .text_color(theme.muted_foreground)
                 .into_any_element()
         }))
+}
+
+/// Shared card body for list rows and pinned desktop cards.
+pub fn render_card_content(item: &ClipboardItem, cx: &App) -> AnyElement {
+    let preview_lines: Vec<SharedString> = display_lines(item)
+        .into_iter()
+        .map(SharedString::from)
+        .collect();
+    let time_text = format_time_ago(&item.created_at);
+    let file_count = item.file_paths.as_ref().map(|p| p.len());
+    card_content(
+        item.content_type,
+        &preview_lines,
+        &time_text,
+        item.is_pinned,
+        file_count,
+        cx,
+    )
+    .into_any_element()
 }
 
 fn display_lines(item: &ClipboardItem) -> Vec<String> {
