@@ -22,11 +22,11 @@ pub const DRAG_CARD_WIDTH: f32 = 488.;
 const TEXT_SM_LINE_H: f32 = 20.;
 
 /// Left half: drag reorder zone (pale yellow `#FFF9E6`).
-fn drag_zone_bg() -> Hsla {
+pub(crate) fn drag_zone_bg() -> Hsla {
     hsla(45. / 360., 0.85, 0.95, 1.)
 }
 /// Right half: click-to-paste zone (light blue `#D6E4FF`).
-fn paste_zone_bg() -> Hsla {
+pub(crate) fn paste_zone_bg() -> Hsla {
     hsla(220. / 360., 0.55, 0.92, 1.)
 }
 
@@ -303,7 +303,7 @@ pub fn render_clipboard_item(
 }
 
 /// Fixed 50/50 split — absolute halves so wide clipped content cannot expand one side.
-fn render_split_card(
+pub(crate) fn render_split_card(
     left: impl IntoElement,
     right: impl IntoElement,
 ) -> impl IntoElement {
@@ -333,7 +333,8 @@ fn render_split_card(
         )
 }
 
-fn render_zone_overlay() -> impl IntoElement {
+/// Yellow/blue zone tint shown on card hover (list + pinned desktop cards).
+pub(crate) fn render_zone_overlay() -> impl IntoElement {
     render_split_card(
         div().size_full().bg(drag_zone_bg()),
         div().size_full().bg(paste_zone_bg()),

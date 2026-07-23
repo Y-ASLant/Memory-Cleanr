@@ -470,7 +470,7 @@ impl MemoryCleanerApp {
             let opened = cx.open_window(options, |window, cx| {
                 window.set_window_title(&title);
                 crate::ui::theme::init_light_theme(window, cx);
-                let _ = crate::win32::window::remove_maximize_button(window);
+                let _ = crate::win32::window::set_tool_window(window);
                 let pinned = cx.new(|_| PinnedCardWindow::new(item_for_window));
                 cx.new(|cx| Root::new(pinned, window, cx))
             });
