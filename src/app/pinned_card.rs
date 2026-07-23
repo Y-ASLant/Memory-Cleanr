@@ -45,10 +45,11 @@ impl PinnedCardWindow {
         }
     }
 
-    fn paste(&self, cx: &mut Context<Self>) {
+    fn paste(&self, window: &mut Window, cx: &mut Context<Self>) {
         let item_id = self.item.id;
+        let pinned = window.window_handle();
         let app = cx.global::<AppEntityHolder>().0.clone();
-        app.update(cx, |app, cx| app.paste_clipboard_item(item_id, cx));
+        app.update(cx, |app, cx| app.paste_clipboard_item_from_pinned(item_id, pinned, cx));
     }
 
     fn close(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -192,9 +193,9 @@ impl Render for PinnedCardWindow {
                             .id(("pinned-paste", item_id as u32))
                             .size_full()
                             .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| {
+                            .on_click(cx.listener(|this, _, window, cx| {
                                 cx.stop_propagation();
-                                this.paste(cx);
+                                this.paste(window, cx);
                             })),
                     ))
                     .when(show_close, |el| {

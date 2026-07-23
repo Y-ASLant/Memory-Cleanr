@@ -1,4 +1,4 @@
-use gpui::{point, px, AppContext, Point, Pixels};
+use gpui::{point, px, AnyWindowHandle, AppContext, Point, Pixels};
 use gpui_component::{Root, WindowExt};
 use std::time::Duration;
 
@@ -216,12 +216,34 @@ impl MemoryCleanerApp {
     }
 
     pub fn paste_clipboard_item(&mut self, id: i64, cx: &mut gpui::Context<Self>) {
+        self.paste_clipboard_item_hiding(id, None, cx);
+    }
+
+    /// Paste from a floating pinned card — hide that window so focus can reach the target app.
+    pub fn paste_clipboard_item_from_pinned(
+        &mut self,
+        id: i64,
+        pinned: AnyWindowHandle,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.paste_clipboard_item_hiding(id, Some(pinned), cx);
+    }
+
+    fn paste_clipboard_item_hiding(
+        &mut self,
+        id: i64,
+        hide_window: Option<AnyWindowHandle>,
+        cx: &mut gpui::Context<Self>,
+    ) {
         let Some(storage) = &self.clipboard_storage else {
             return;
         };
         let Ok(Some(item)) = storage.get(id) else {
             return;
         };
+
+        let restore_handle = hide_window.or(self.window);
+        let hide_main_window = hide_window.is_none();
 
         // Hide on UI thread → paste on worker → show again (window not destroyed).
         cx.spawn(async move |this, cx| {
@@ -249,11 +271,13 @@ impl MemoryCleanerApp {
                 return;
             }
 
-            let _ = this.update(cx, |app, cx| {
-                if let Some(handle) = app.window {
+            let _ = this.update(cx, |_, cx| {
+                if let Some(handle) = restore_handle {
                     let _ = handle.update(cx, |_, window, _| {
                         if let Ok(hwnd) = win32::window::hwnd_from_window(window) {
-                            win32::focus::set_our_hwnd(hwnd);
+                            if hide_main_window {
+                                win32::focus::set_our_hwnd(hwnd);
+                            }
                             win32::window::hide_hwnd(hwnd);
                         }
                     });
@@ -267,13 +291,18 @@ impl MemoryCleanerApp {
                 crate::log_msg(&format!("[clipboard] paste failed: {e:#}"));
             }
 
-            let _ = this.update(cx, |app, cx| {
-                if let Some(handle) = app.window {
+            let _ = this.update(cx, |_, cx| {
+                if let Some(handle) = restore_handle {
                     let _ = handle.update(cx, |_, window, _| {
                         if let Ok(hwnd) = win32::window::hwnd_from_window(window) {
-                            // Reappear first without stealing focus, then take focus back.
                             win32::window::show_hwnd_noactivate(hwnd);
-                            let _ = win32::focus::restore_our_foreground();
+                            if hide_main_window {
+                                let _ = win32::focus::restore_our_foreground();
+                            } else if let Err(e) = win32::window::set_always_on_top(window, true) {
+                                crate::log_msg(&format!(
+                                    "[clipboard] pinned restore topmost failed: {e:#}"
+                                ));
+                            }
                         }
                     });
                 }
@@ -435,6 +464,7 @@ impl MemoryCleanerApp {
         if let Some(handle) = self.pinned_card_handles.get(&item_id) {
             if handle
                 .update(cx, |_, window, _| {
+                    let _ = crate::win32::window::set_always_on_top(window, true);
                     window.activate_window();
                 })
                 .is_ok()
@@ -471,6 +501,7 @@ impl MemoryCleanerApp {
                 window.set_window_title(&title);
                 crate::ui::theme::init_light_theme(window, cx);
                 let _ = crate::win32::window::set_tool_window(window);
+                let _ = crate::win32::window::set_always_on_top(window, true);
                 let pinned = cx.new(|_| PinnedCardWindow::new(item_for_window));
                 cx.new(|cx| Root::new(pinned, window, cx))
             });
