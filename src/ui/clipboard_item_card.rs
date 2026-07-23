@@ -38,11 +38,11 @@ pub struct DragClipboardItem {
 
 #[derive(Clone)]
 pub(crate) struct DragPreviewCard {
-    lines: Vec<SharedString>,
-    time_text: SharedString,
-    content_type: ContentType,
-    is_pinned: bool,
-    file_count: Option<usize>,
+    pub(crate) lines: Vec<SharedString>,
+    pub(crate) time_text: SharedString,
+    pub(crate) content_type: ContentType,
+    pub(crate) is_pinned: bool,
+    pub(crate) file_count: Option<usize>,
 }
 
 impl Render for DragPreviewCard {
@@ -52,51 +52,68 @@ impl Render for DragPreviewCard {
             .try_global::<AppEntityHolder>()
             .is_some_and(|holder| holder.0.read(cx).clipboard_drag_tearoff)
         {
-            return div().occlude();
+            return div().occlude().into_any_element();
         }
 
-        // Keep the ghost non-interactive so list `on_drag_move` still receives pointer events
-        // (same idea as dnd-kit DragOverlay not blocking collision).
-        let theme = cx.theme();
-        div()
-            .relative()
-            .w(px(DRAG_CARD_WIDTH))
-            .h(px(ITEM_HEIGHT))
-            .overflow_hidden()
-            .border_1()
-            .border_color(theme.primary)
-            .rounded_md()
-            .cursor_grabbing()
-            .child(render_split_card(
-                div().size_full().bg(drag_zone_bg()),
-                div().size_full().bg(paste_zone_bg()),
-            ))
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .px_2()
-                    .py_2()
-                    .overflow_hidden()
-                    .child(card_content(
-                        self.content_type,
-                        &self.lines,
-                        &self.time_text,
-                        self.is_pinned,
-                        self.file_count,
-                        cx,
-                    )),
-            )
-            .shadow(vec![BoxShadow {
-                color: hsla(0., 0., 0., 0.16),
-                offset: point(px(0.), px(6.)),
-                blur_radius: px(16.),
-                spread_radius: px(0.),
-                inset: false,
-            }])
-            // Keep scale=1 (ElegantClipboard dropAnimation forces no scale bounce).
-            .opacity(0.96)
+        render_drag_preview_ghost(
+            self.content_type,
+            &self.lines,
+            &self.time_text,
+            self.is_pinned,
+            self.file_count,
+            cx,
+        )
+        .into_any_element()
     }
+}
+
+/// Shared drag ghost chrome for in-window overlay and tear-off follower window.
+pub(crate) fn render_drag_preview_ghost(
+    content_type: ContentType,
+    lines: &[SharedString],
+    time_text: &SharedString,
+    is_pinned: bool,
+    file_count: Option<usize>,
+    cx: &App,
+) -> impl IntoElement {
+    let theme = cx.theme();
+    div()
+        .relative()
+        .w(px(DRAG_CARD_WIDTH))
+        .h(px(ITEM_HEIGHT))
+        .overflow_hidden()
+        .border_1()
+        .border_color(theme.primary)
+        .rounded_md()
+        .cursor_grabbing()
+        .child(render_split_card(
+            div().size_full().bg(drag_zone_bg()),
+            div().size_full().bg(paste_zone_bg()),
+        ))
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .px_2()
+                .py_2()
+                .overflow_hidden()
+                .child(card_content(
+                    content_type,
+                    lines,
+                    time_text,
+                    is_pinned,
+                    file_count,
+                    cx,
+                )),
+        )
+        .shadow(vec![BoxShadow {
+            color: hsla(0., 0., 0., 0.16),
+            offset: point(px(0.), px(6.)),
+            blur_radius: px(16.),
+            spread_radius: px(0.),
+            inset: false,
+        }])
+        .opacity(0.96)
 }
 
 /// Render a single clipboard item card.
