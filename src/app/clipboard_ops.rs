@@ -10,6 +10,20 @@ use crate::ui::clipboard_item_card::{DRAG_CARD_WIDTH, ITEM_HEIGHT};
 use crate::win32;
 
 use super::MemoryCleanerApp;
+impl MemoryCleanerApp {
+    /// Look up a clipboard item by id from the in-memory cache, falling back to storage.
+    pub(crate) fn find_clipboard_item(&self, id: i64) -> Option<crate::clipboard::ClipboardItem> {
+        self.clipboard_items
+            .iter()
+            .find(|item| item.id == id)
+            .cloned()
+            .or_else(|| {
+                self.clipboard_storage
+                    .as_ref()
+                    .and_then(|storage| storage.get(id).ok().flatten())
+            })
+    }
+}
 
 impl MemoryCleanerApp {
     /// Show or toggle the clipboard history panel (tray / no direct window handle).
@@ -52,10 +66,10 @@ impl MemoryCleanerApp {
             if let Ok(hwnd) = win32::window::hwnd_from_window(window) {
                 win32::focus::set_our_hwnd(hwnd);
             }
-        }
-        self.clipboard_visible = visible;
-        if visible {
+            self.clipboard_visible = visible;
             self.refresh_clipboard_items();
+        } else {
+            self.clipboard_visible = visible;
         }
         // Must resize on the click's window — handle.update can leave the clipboard height
         // stuck after returning, which looks like a collapsed layout with empty space.
@@ -410,18 +424,7 @@ impl MemoryCleanerApp {
             return;
         }
 
-        let item = self
-            .clipboard_items
-            .iter()
-            .find(|item| item.id == item_id)
-            .cloned()
-            .or_else(|| {
-                self.clipboard_storage
-                    .as_ref()
-                    .and_then(|storage| storage.get(item_id).ok().flatten())
-            });
-
-        let Some(item) = item else {
+        let Some(item) = self.find_clipboard_item(item_id) else {
             crate::log_msg(&format!(
                 "[clipboard] tearoff preview missing item {item_id}"
             ));
@@ -480,18 +483,7 @@ impl MemoryCleanerApp {
             self.pinned_card_handles.remove(&item_id);
         }
 
-        let item = self
-            .clipboard_items
-            .iter()
-            .find(|item| item.id == item_id)
-            .cloned()
-            .or_else(|| {
-                self.clipboard_storage
-                    .as_ref()
-                    .and_then(|storage| storage.get(item_id).ok().flatten())
-            });
-
-        let Some(item) = item else {
+        let Some(item) = self.find_clipboard_item(item_id) else {
             crate::log_msg(&format!("[clipboard] tearoff missing item {item_id}"));
             return;
         };

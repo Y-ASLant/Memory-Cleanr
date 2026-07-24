@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use smol::Timer;
@@ -11,26 +12,24 @@ use super::{MEMORY_REFRESH_INTERVAL, MemoryCleanerApp, query_sections};
 impl MemoryCleanerApp {
     pub(crate) fn pause_memory_refresh(&self) {
         self.memory_refresh_generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub(crate) fn pause_anim(&self) {
         self.anim_generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub(crate) fn start_anim(&self, cx: &mut gpui::Context<Self>) {
         if self.window.is_none() {
             return;
         }
-        let generation = self
-            .anim_generation
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let generation = self.anim_generation.load(Ordering::Relaxed);
         let gen_arc = Arc::clone(&self.anim_generation);
         cx.spawn(async move |this, cx| {
             loop {
                 Timer::after(crate::anim::ANIM_INTERVAL).await;
-                if gen_arc.load(std::sync::atomic::Ordering::Relaxed) != generation {
+                if gen_arc.load(Ordering::Relaxed) != generation {
                     break;
                 }
                 let Ok(animating) = this.update(cx, |app, cx| {
@@ -66,14 +65,12 @@ impl MemoryCleanerApp {
             return;
         }
 
-        let generation = self
-            .memory_refresh_generation
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let generation = self.memory_refresh_generation.load(Ordering::Relaxed);
         let gen_arc = Arc::clone(&self.memory_refresh_generation);
         cx.spawn(async move |this, cx| {
             loop {
                 Timer::after(MEMORY_REFRESH_INTERVAL).await;
-                if gen_arc.load(std::sync::atomic::Ordering::Relaxed) != generation {
+                if gen_arc.load(Ordering::Relaxed) != generation {
                     break;
                 }
                 let Ok(()) = this.update(cx, |app, cx| {
